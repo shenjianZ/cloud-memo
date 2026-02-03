@@ -1,0 +1,416 @@
+import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
+import * as noteApi from '@/services/noteApi'
+import { useTagStore } from './tagStore'
+import type { Note as ApiNote, CreateNoteRequest, UpdateNoteRequest } from '@/services/noteApi'
+import type { Note, NoteFolder, NoteFilter } from '@/types/note'
+import { save } from '@tauri-apps/plugin-dialog'
+import { writeTextFile } from '@tauri-apps/plugin-fs'
+import { tiptapJsonToMarkdown } from '@/lib/tiptapMarkdown'
+import { getNoteTitle } from '@/lib/noteHelpers'
+import { toast } from 'sonner'
+
+/**
+ * 将 API Note 类型转换为应用 Note 类型
+ * 支持 Tiptap JSON 和 Markdown 字符串
+ */
+async function apiNoteToNote(apiNote: ApiNote, tagStore?: any): Promise<Note> {
+  // 尝试解析 content 为 Tiptap JSON，如果是旧 Markdown 格式则保持字符串
+  let content: Note['content']
+  try {
+    const parsed = JSON.parse(apiNote.content)
+    // 验证是否为有效的 Tiptap JSON 结构
+    if (parsed && typeof parsed === 'object' && parsed.type === 'doc') {
+      content = parsed
+    } else {
+      content = apiNote.content  // 保持 Markdown 字符串
+    }
+  } catch {
+    // JSON 解析失败，保持 Markdown 字符串格式
+    content = apiNote.content
+  }
+
+  // 加载标签
+  let tags: string[] = []
+  try {
+    if (tagStore) {
+      const noteTags = await tagStore.getNoteTags(apiNote.id)
+      tags = noteTags.map((t: any) => t.id)
+    }
+  } catch (error) {
+    console.error('Failed to load tags:', error)
+  }
+
+  return {
+    id: apiNote.id,
+    title: apiNote.title,
+    author: apiNote.author,
+    content,
+    markdownCache: apiNote.markdownCache,
+    createdAt: apiNote.createdAt * 1000, // 转换秒级时间戳为毫秒
+    updatedAt: apiNote.updatedAt * 1000, // 转换秒级时间戳为毫秒
+    tags,
+    folder: apiNote.folderId,
+    isPinned: apiNote.isPinned,
+    isFavorite: apiNote.isFavorite,
+  }
+}
+
+/**
+ * 将应用 Note 类型转换为 API CreateNoteRequest
+ * 将 Tiptap JSON 对象序列化为字符串
+ */
+function noteToCreateRequest(note: Partial<Note>): CreateNoteRequest {
+  // 处理 content：如果是对象则序列化为 JSON 字符串
+  const content = typeof note.content === 'object'
+    ? JSON.stringify(note.content)
+    : (note.content || '')
+
+  return {
+    title: note.title || '未命名笔记',
+    content,
+    folderId: note.folder,
+  }
+}
+
+/**
+ * 将应用 Note 类型转换为 API UpdateNoteRequest
+ * 将 Tiptap JSON 对象序列化为字符串
+ */
+function noteToUpdateRequest(id: string, updates: Partial<Note>): UpdateNoteRequest {
+  // 处理 content：如果是对象则序列化为 JSON 字符串
+  const content = updates.content !== undefined
+    ? (typeof updates.content === 'object' ? JSON.stringify(updates.content) : updates.content)
+    : undefined
+
+  return {
+    id,
+    title: updates.title,
+    content,
+    folderId: updates.folder,
+    isFavorite: updates.isFavorite,
+    isPinned: updates.isPinned,
+    author: updates.author,
+  }
+}
+
+interface NoteStore {
+  notes: Note[]
+  folders: NoteFolder[]
+  activeNoteId: string | null
+  isLoading: boolean
+  isStorageLoaded: boolean
+
+  // 笔记操作
+  createNote: (note: Partial<Note>) => Promise<Note>
+  updateNote: (id: string, updates: Partial<Note>) => Promise<void>
+  deleteNote: (id: string) => Promise<void>
+  duplicateNote: (id: string) => Promise<Note>
+  exportNote: (id: string) => Promise<void>
+
+  // 标签操作
+  setNoteTags: (noteId: string, tagIds: string[]) => Promise<void>
+
+  // 文件夹操作
+  createFolder: (name: string, parentId?: string) => Promise<NoteFolder>
+  deleteFolder: (id: string) => Promise<void>
+
+  // 查询
+  getNote: (id: string) => Note | undefined
+  searchNotes: (filter: NoteFilter) => Note[]
+  searchNotesApi: (query: string) => Promise<Note[]>
+
+  // 存储
+  loadNotesFromStorage: () => Promise<void>
+  saveNotesToStorage: () => Promise<void>
+
+  // 批量操作
+  pinNote: (id: string) => void
+  favoriteNote: (id: string) => void
+
+  // 数据管理
+  exportAllNotes: () => Promise<void>
+  clearAllNotes: () => Promise<void>
+}
+
+export const useNoteStore = create<NoteStore>()(
+  persist(
+    (set, get) => ({
+      notes: [],
+      folders: [],
+      activeNoteId: null,
+      isLoading: false,
+      isStorageLoaded: false,
+
+      createNote: async (note: Partial<Note>) => {
+        set({ isLoading: true })
+        try {
+          const request = noteToCreateRequest(note)
+          const apiNote = await noteApi.createNote(request)
+          const tagStore = useTagStore.getState()
+          const newNote = await apiNoteToNote(apiNote, tagStore)
+
+          set((state) => ({
+            notes: [...state.notes, newNote],
+            activeNoteId: newNote.id,
+            isLoading: false,
+          }))
+
+          return newNote
+        } catch (error) {
+          console.error('Failed to create note:', error)
+          set({ isLoading: false })
+          throw error
+        }
+      },
+
+      updateNote: async (id, updates) => {
+        set({ isLoading: true })
+        try {
+          const request = noteToUpdateRequest(id, updates)
+          const apiNote = await noteApi.updateNote(request)
+          const tagStore = useTagStore.getState()
+          const updatedNote = await apiNoteToNote(apiNote, tagStore)
+
+          set((state) => ({
+            notes: state.notes.map((n) => (n.id === id ? updatedNote : n)),
+            isLoading: false,
+          }))
+        } catch (error) {
+          console.error('Failed to update note:', error)
+          set({ isLoading: false })
+          throw error
+        }
+      },
+
+      deleteNote: async (id) => {
+        set({ isLoading: true })
+        try {
+          await noteApi.deleteNote(id)
+
+          set((state) => ({
+            notes: state.notes.filter((n) => n.id !== id),
+            activeNoteId: state.activeNoteId === id ? null : state.activeNoteId,
+            isLoading: false,
+          }))
+        } catch (error) {
+          console.error('Failed to delete note:', error)
+          set({ isLoading: false })
+          throw error
+        }
+      },
+
+      duplicateNote: async (id) => {
+        const original = get().notes.find((n) => n.id === id)
+        if (!original) throw new Error('Note not found')
+
+        return get().createNote({
+          ...original,
+          title: `${original.title} (副本)`,
+        })
+      },
+
+      exportNote: async (id) => {
+        const note = get().notes.find((n) => n.id === id)
+        if (!note) throw new Error('Note not found')
+
+        try {
+          const markdown = tiptapJsonToMarkdown(note.content)
+          const title = getNoteTitle(note)
+          const blob = new Blob([markdown], { type: 'text/markdown' })
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = `${title}.md`
+          document.body.appendChild(a)
+          a.click()
+          document.body.removeChild(a)
+          URL.revokeObjectURL(url)
+          toast.success('导出成功')
+        } catch (error) {
+          console.error('Failed to export note:', error)
+          toast.error('导出失败')
+          throw error
+        }
+      },
+
+      createFolder: async (name, parentId) => {
+        const newFolder: NoteFolder = {
+          id: crypto.randomUUID(),
+          name,
+          parentId: parentId || null,
+          createdAt: Date.now(),
+        }
+
+        set((state) => ({
+          folders: [...state.folders, newFolder],
+        }))
+
+        return newFolder
+      },
+
+      deleteFolder: async (id) => {
+        set((state) => ({
+          folders: state.folders.filter((f) => f.id !== id),
+        }))
+      },
+
+      getNote: (id) => {
+        return get().notes.find((n) => n.id === id)
+      },
+
+      searchNotes: (filter) => {
+        const { notes } = get()
+        return notes.filter((note) => {
+          // 标题搜索
+          if (filter.query) {
+            const title = getNoteTitle(note).toLowerCase()
+            if (!title.includes(filter.query.toLowerCase())) {
+              return false
+            }
+          }
+
+          // 标签过滤
+          if (filter.tags.length > 0) {
+            const hasAllTags = filter.tags.every((tag) => note.tags.includes(tag))
+            if (!hasAllTags) return false
+          }
+
+          // 文件夹过滤
+          if (filter.folder && note.folder !== filter.folder) {
+            return false
+          }
+
+          // 收藏过滤
+          if (filter.favorites && !note.isFavorite) {
+            return false
+          }
+
+          return true
+        })
+      },
+
+      searchNotesApi: async (query) => {
+        try {
+          const apiNotes = await noteApi.searchNotes(query)
+          const tagStore = useTagStore.getState()
+          const notes = await Promise.all(apiNotes.map(apiNote => apiNoteToNote(apiNote, tagStore)))
+          return notes
+        } catch (error) {
+          console.error('Failed to search notes:', error)
+          return []
+        }
+      },
+
+      setNoteTags: async (noteId, tagIds) => {
+        try {
+          const tagStore = useTagStore.getState()
+          await tagStore.setNoteTags(noteId, tagIds)
+
+          // 更新本地笔记的标签
+          set((state) => ({
+            notes: state.notes.map((n) => (n.id === noteId ? { ...n, tags: tagIds } : n)),
+          }))
+        } catch (error) {
+          console.error('Failed to set note tags:', error)
+          throw error
+        }
+      },
+
+      loadNotesFromStorage: async () => {
+        set({ isLoading: true })
+        try {
+          const apiNotes = await noteApi.listNotes()
+          const tagStore = useTagStore.getState()
+          const notes = await Promise.all(apiNotes.map(apiNote => apiNoteToNote(apiNote, tagStore)))
+          set({ notes, isLoading: false, isStorageLoaded: true })
+        } catch (error) {
+          console.error('Failed to load notes from storage:', error)
+          set({ isLoading: false, isStorageLoaded: true })
+        }
+      },
+
+      saveNotesToStorage: async () => {
+        // Notes are saved individually in updateNote/createNote
+        // This method can be used for batch save if needed
+      },
+
+      pinNote: (id) => {
+        const note = get().notes.find((n) => n.id === id)
+        if (note) {
+          get().updateNote(id, { isPinned: !note.isPinned })
+        }
+      },
+
+      favoriteNote: (id) => {
+        const note = get().notes.find((n) => n.id === id)
+        if (note) {
+          get().updateNote(id, { isFavorite: !note.isFavorite })
+        }
+      },
+
+      exportAllNotes: async () => {
+        try {
+          const { notes } = get()
+
+          // 创建包含所有笔记的 Markdown 内容
+          let markdownContent = `# 笔记备份\n\n`
+          markdownContent += `导出时间: ${new Date().toLocaleString()}\n\n`
+          markdownContent += `---\n\n`
+
+          for (const note of notes) {
+            const title = getNoteTitle(note)
+            markdownContent += `# ${title}\n\n`
+            markdownContent += tiptapJsonToMarkdown(note.content)
+            markdownContent += `\n\n---\n\n`
+          }
+
+          // 打开保存对话框
+          const filePath = await save({
+            filters: [
+              {
+                name: 'Markdown',
+                extensions: ['md'],
+              },
+            ],
+            defaultPath: `notes_backup_${Date.now()}.md`,
+          })
+
+          if (filePath) {
+            await writeTextFile(filePath, markdownContent)
+            toast.success('导出成功', { description: `已导出 ${notes.length} 篇笔记` })
+          }
+        } catch (error) {
+          console.error('Failed to export notes:', error)
+          toast.error('导出失败', { description: error instanceof Error ? error.message : '未知错误' })
+        }
+      },
+
+      clearAllNotes: async () => {
+        try {
+          const { notes } = get()
+
+          // 删除所有笔记
+          for (const note of notes) {
+            await noteApi.deleteNote(note.id)
+          }
+
+          set({ notes: [], activeNoteId: null })
+          toast.success('所有数据已清除')
+        } catch (error) {
+          console.error('Failed to clear notes:', error)
+          toast.error('清除失败', { description: error instanceof Error ? error.message : '未知错误' })
+          throw error
+        }
+      },
+    }),
+    {
+      name: 'markdown-notes-storage',
+      partialize: (state) => ({
+        folders: state.folders,
+        activeNoteId: state.activeNoteId,
+        // Notes are loaded from database, not persisted in localStorage
+      }),
+    }
+  )
+)

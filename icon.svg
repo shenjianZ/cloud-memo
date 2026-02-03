@@ -1,0 +1,17 @@
+<svg width="1024" height="1024" viewBox="15 20 70 70" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 
+       修改说明：
+       原来的 viewBox 是 "0 0 100 100"，你的图案主要分布在 x:20-80, y:25-85 的区域。
+       现在的 viewBox 改为 "15 20 70 70"，这会裁掉四周的空白，让图标填满整个区域。
+  -->
+
+  <!-- 底部阴影/底层 -->
+  <path d="M30 35 H70 C75.5 35 80 39.5 80 45 V75 C80 80.5 75.5 85 70 85 H30 C24.5 85 20 80.5 20 75 V45 C20 39.5 24.5 35 30 35 Z" fill="#27272a" fill-opacity="0.2"/>
+  
+  <!-- 主体纸张 -->
+  <path d="M30 25 H70 C75.5 25 80 29.5 80 35 V65 C80 70.5 75.5 75 70 75 H30 C24.5 75 20 70.5 20 65 V35 C20 29.5 24.5 25 30 25 Z" fill="white" stroke="#18181b" stroke-width="2"/>
+  
+  <!-- 内部流动的线条 -->
+  <path d="M35 45 H65" stroke="#18181b" stroke-width="4" stroke-linecap="round"/>
+  <path d="M35 58 H50" stroke="#3b82f6" stroke-width="4" stroke-linecap="round"/>
+</svg>

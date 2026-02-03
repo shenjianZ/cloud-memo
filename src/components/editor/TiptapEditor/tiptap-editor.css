@@ -1,0 +1,357 @@
+/* ==================== Tiptap 编辑器样式 ==================== */
+
+/* 编辑器基础样式 */
+.ProseMirror {
+  outline: none;
+}
+
+/* ==================== 标题样式 ==================== */
+.ProseMirror h1 {
+  font-size: 2.25em;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  color: var(--foreground);
+}
+
+.ProseMirror h2 {
+  font-size: 1.75em;
+  font-weight: 600;
+  line-height: 1.3;
+  margin-top: 1.25em;
+  margin-bottom: 0.5em;
+  color: var(--foreground);
+}
+
+.ProseMirror h3 {
+  font-size: 1.5em;
+  font-weight: 600;
+  line-height: 1.4;
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+  color: var(--foreground);
+}
+
+.ProseMirror h4 {
+  font-size: 1.25em;
+  font-weight: 600;
+  line-height: 1.5;
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+  color: var(--foreground);
+}
+
+.ProseMirror h5 {
+  font-size: 1.1em;
+  font-weight: 600;
+  line-height: 1.5;
+  margin-top: 0.75em;
+  margin-bottom: 0.5em;
+  color: var(--foreground);
+}
+
+.ProseMirror h6 {
+  font-size: 1em;
+  font-weight: 600;
+  line-height: 1.5;
+  margin-top: 0.75em;
+  margin-bottom: 0.5em;
+  color: var(--foreground);
+}
+
+/* ==================== 段落样式 ==================== */
+.ProseMirror p {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+  line-height: 1.7;
+  color: var(--foreground);
+}
+
+/* ==================== 列表样式 ==================== */
+.ProseMirror ul,
+.ProseMirror ol {
+  margin-top: 0.75em;
+  margin-bottom: 0.75em;
+  padding-left: 1.5em;
+  color: var(--foreground);
+}
+
+.ProseMirror li {
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
+}
+
+.ProseMirror li p {
+  margin-top: 0;
+  margin-bottom: 0;
+  line-height: 1.7;
+  min-height: 1.5em; /* 确保列表项可输入 */
+}
+
+/* 任务列表 */
+.ProseMirror ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+
+.ProseMirror ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+  margin: 0.5em 0;
+}
+
+.ProseMirror ul[data-type="taskList"] li input[type="checkbox"] {
+  margin-top: 0.5em; /* 垂直居中对齐 */
+  flex-shrink: 0;
+  width: 1em;
+  height: 1em;
+  cursor: pointer;
+}
+
+.ProseMirror ul[data-type="taskList"] li p {
+  flex: 1;
+  margin: 0;
+}
+
+/* ==================== 引用样式 ==================== */
+.ProseMirror blockquote {
+  border-left: 4px solid var(--muted-foreground);
+  padding-left: 1em;
+  margin-top: 1em;
+  margin-bottom: 1em;
+  font-style: italic;
+  color: var(--muted-foreground);
+}
+
+/* ==================== 代码样式 ==================== */
+/* 代码块 */
+.ProseMirror pre {
+  background-color: #f6f8fa;
+  border-radius: 0.5rem;
+  padding: 1em;
+  margin-top: 1.5em; /* 为语言选择器留出空间 */
+  margin-bottom: 1em;
+  overflow-x: auto;
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, 'Courier New', monospace;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  position: relative;
+}
+
+.ProseMirror pre code {
+  color: inherit;
+  font-family: inherit;
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* 行内代码 - 但不是代码块中的代码 */
+.ProseMirror :not(pre) > code {
+  background-color: rgb(255, 255, 255);
+  color: rgb(255, 0, 0);
+  padding: 0.125em 0.375em;
+  border-radius: 0.25rem;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 0.875em;
+}
+
+/* ==================== 水平分割线 ==================== */
+.ProseMirror hr {
+  border: none;
+  border-top: 2px solid var(--border);
+  margin-top: 2em;
+  margin-bottom: 2em;
+}
+
+/* ==================== 链接样式 ==================== */
+.ProseMirror a {
+  color: var(--primary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.ProseMirror a:hover {
+  color: var(--primary);
+  opacity: 0.8;
+}
+
+/* ==================== 强调样式 ==================== */
+.ProseMirror strong {
+  font-weight: 700;
+}
+
+.ProseMirror em {
+  font-style: italic;
+}
+
+.ProseMirror s {
+  text-decoration: line-through;
+}
+
+/* ==================== 表格样式 ==================== */
+.ProseMirror table {
+  border-collapse: collapse;
+  table-layout: auto;
+  width: 100%;
+  margin: 1em 0;
+  overflow: hidden;
+}
+
+.ProseMirror table td,
+.ProseMirror table th {
+  min-width: 1em;
+  border: 1px solid var(--border);
+  padding: 0.5em 0.75em;
+  vertical-align: top;
+  box-sizing: border-box;
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+.ProseMirror table th {
+  font-weight: 600;
+  text-align: left;
+  background-color: var(--muted);
+}
+
+.ProseMirror table .selectedCell:after {
+  z-index: 2;
+  position: absolute;
+  content: "";
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(200, 200, 255, 0.4);
+  pointer-events: none;
+}
+
+.ProseMirror table .column-selected {
+  background-color: rgba(200, 200, 255, 0.4);
+}
+
+/* ==================== 选中样式 ==================== */
+.ProseMirror ::selection {
+  background-color: rgb(173, 216, 230); /* 浅蓝色 */
+  color: var(--foreground);
+}
+
+.ProseMirror ::-moz-selection {
+  background-color: rgb(173, 216, 230); /* Firefox 支持 */
+  color: var(--foreground);
+}
+
+/* ==================== 占位符 ==================== */
+.ProseMirror p.is-editor-empty:first-child::before {
+  color: var(--muted-foreground);
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* ==================== 暗色模式适配 ==================== */
+.dark .ProseMirror h1,
+.dark .ProseMirror h2,
+.dark .ProseMirror h3,
+.dark .ProseMirror h4,
+.dark .ProseMirror h5,
+.dark .ProseMirror h6 {
+  color: var(--foreground);
+}
+
+.dark .ProseMirror p {
+  color: var(--foreground);
+}
+
+.dark .ProseMirror ul,
+.dark .ProseMirror ol {
+  color: var(--foreground);
+}
+
+.dark .ProseMirror blockquote {
+  border-left-color: var(--muted-foreground);
+  color: var(--muted-foreground);
+}
+
+/* 暗色模式下的代码块 */
+.dark .ProseMirror pre {
+  background-color: #1d2125; /* GitHub Dark 背景色 */
+}
+
+.dark .ProseMirror pre code {
+  background-color: transparent;
+  /* 不设置 color，让 highlight.js 的语法高亮生效 */
+}
+
+/* 暗色模式下的行内代码 */
+.dark .ProseMirror :not(pre) > code {
+  background-color: rgb(255, 255, 255);
+  color: rgb(255, 0, 0);
+}
+
+.dark .ProseMirror a {
+  color: var(--primary);
+}
+
+/* ==================== 代码块语言选择器样式 ==================== */
+.tiptap-code-language-selector {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 10;
+}
+
+.tiptap-code-language-dropdown {
+  position: fixed;
+  z-index: 50;
+  min-width: 12rem;
+  background-color: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.5rem;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  max-height: 20rem;
+  overflow-y: auto;
+}
+
+.tiptap-code-language-dropdown input {
+  width: 100%;
+  padding: 0.5rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem;
+  background-color: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  color: var(--foreground);
+}
+
+.tiptap-code-language-dropdown input:focus {
+  outline: none;
+  ring: 2px solid var(--ring);
+}
+
+.tiptap-code-language-option {
+  display: block;
+  width: 100%;
+  padding: 0.375rem 0.5rem;
+  font-size: 0.875rem;
+  text-align: left;
+  border-radius: 0.25rem;
+  color: var(--foreground);
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.tiptap-code-language-option:hover {
+  background-color: var(--muted);
+}
+
+.tiptap-code-language-option.active {
+  background-color: var(--accent);
+  color: var(--accent-foreground);
+}

@@ -1,0 +1,8 @@
+ssh-terminal*
+node_modules/
+pnpm-lock.yaml
+dist/
+src-tauri/gen/android
+src-tauri/gen/ios
+src-tauri/target
+src-tauri/Cargo.lock

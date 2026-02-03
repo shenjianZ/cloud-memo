@@ -1,0 +1,85 @@
+/* ==================== 自定义标题栏样式 ==================== */
+
+.titlebar {
+  height: 36px;
+  background: var(--background);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-app-region: no-drag;
+}
+
+/* 拖拽区域 - 左侧 */
+.titlebar-drag-area {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding-left: 12px;
+  gap: 8px;
+  -webkit-app-region: drag;
+}
+
+.titlebar-icon {
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+
+.titlebar-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 窗口控制按钮区域 - 右侧 */
+.window-controls {
+  display: flex;
+  height: 100%;
+  -webkit-app-region: no-drag;
+}
+
+.control-btn {
+  width: 46px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: default;
+  transition: background 0.15s ease;
+  color: var(--muted-foreground);
+}
+
+.control-btn:hover {
+  background: var(--muted);
+}
+
+/* 关闭按钮特殊的红色悬停 */
+.control-btn-close:hover {
+  background: oklch(0.577 0.245 27.325);
+  color: white;
+}
+
+.dark .control-btn-close:hover {
+  background: oklch(0.704 0.191 22.216);
+  color: white;
+}
+
+/* 为内容区域留出标题栏的高度 */
+.main-content-with-titlebar {
+  padding-top: 36px;
+  height: 100vh;
+  overflow: hidden;
+}

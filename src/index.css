@@ -1,0 +1,755 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  /* 移动端优先的断点配置 */
+  --breakpoint-xs: 375px;
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+  --breakpoint-2xl: 1536px;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-mobile: 12px;
+  
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+
+  /* SSH 状态颜色 */
+  --ssh-connected: oklch(0.65 0.15 145);      /* 绿色 - 已连接 */
+  --ssh-connecting: oklch(0.75 0.12 85);      /* 黄色 - 连接中 */
+  --ssh-error: oklch(0.60 0.20 25);           /* 红色 - 错误 */
+  --ssh-disconnected: oklch(0.70 0.05 250);   /* 灰蓝 - 已断开 */
+
+  /* 品牌颜色 */
+  --brand-primary: oklch(0.55 0.20 250);      /* 蓝色 - 主色 */
+  --brand-secondary: oklch(0.60 0.18 190);    /* 青色 - 次要色 */
+
+  /* SSH 徽章样式 */
+  --badge-connected-bg: oklch(0.65 0.15 145 / 0.15);
+  --badge-connected-text: oklch(0.65 0.15 145);
+  --badge-connecting-bg: oklch(0.75 0.12 85 / 0.15);
+  --badge-connecting-text: oklch(0.75 0.12 85);
+  --badge-error-bg: oklch(0.60 0.20 25 / 0.15);
+  --badge-error-text: oklch(0.60 0.20 25);
+  --badge-disconnected-bg: oklch(0.70 0.05 250 / 0.15);
+  --badge-disconnected-text: oklch(0.70 0.05 250);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(1 0 0 / 20%);
+  --input: oklch(1 0 0 / 25%);
+  --ring: oklch(0.556 0 0);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+
+  /* SSH 状态颜色 - 深色模式 */
+  --ssh-connected: oklch(0.70 0.15 145);
+  --ssh-connecting: oklch(0.80 0.12 85);
+  --ssh-error: oklch(0.65 0.20 25);
+  --ssh-disconnected: oklch(0.75 0.05 250);
+
+  /* 徽章样式 - 深色模式 */
+  --badge-connected-bg: oklch(0.70 0.15 145 / 0.20);
+  --badge-connected-text: oklch(0.70 0.15 145);
+  --badge-connecting-bg: oklch(0.80 0.12 85 / 0.20);
+  --badge-connecting-text: oklch(0.80 0.12 85);
+  --badge-error-bg: oklch(0.65 0.20 25 / 0.20);
+  --badge-error-text: oklch(0.65 0.20 25);
+  --badge-disconnected-bg: oklch(0.75 0.05 250 / 0.20);
+  --badge-disconnected-text: oklch(0.75 0.05 250);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 24px;
+    font-weight: 400;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-text-size-adjust: 100%;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+  }
+
+  /* 滚动条优化 - 跟随主题切换 */
+  /* Webkit浏览器 (Chrome, Safari, Edge) */
+  ::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+  
+  ::-webkit-scrollbar-track {
+    background: var(--muted);
+    border-radius: 6px;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    background: #000000;
+    border-radius: 6px;
+    border: 2px solid var(--muted);
+    transition: background-color 0.2s ease;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    background: #333333;
+  }
+  
+  ::-webkit-scrollbar-corner {
+    background: var(--muted);
+  }
+  
+  /* 深色模式下的滚动条 */
+  .dark ::-webkit-scrollbar-track {
+    background: var(--muted);
+  }
+  
+  .dark ::-webkit-scrollbar-thumb {
+    background: #ffffff;
+    border-color: var(--muted);
+  }
+  
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background: #e0e0e0;
+  }
+  
+  .dark ::-webkit-scrollbar-corner {
+    background: var(--muted);
+  }
+  
+  /* Firefox浏览器 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #000000 var(--muted);
+  }
+  
+  .dark * {
+    scrollbar-color: #ffffff var(--muted);
+  }
+  
+  /* 自定义滚动条容器样式 */
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: #000000 var(--muted);
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: var(--muted/50);
+    border-radius: 4px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #000000;
+    border-radius: 4px;
+    transition: background-color 0.2s ease;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #333333;
+  }
+  
+  /* 深色模式下的自定义滚动条 */
+  .dark .custom-scrollbar {
+    scrollbar-color: #ffffff var(--muted/50);
+  }
+  
+  .dark .custom-scrollbar::-webkit-scrollbar-track {
+    background: var(--muted/50);
+  }
+  
+  .dark .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #ffffff;
+  }
+  
+  .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #e0e0e0;
+  }
+  
+  /* 水平滚动条优化 */
+  .scrollbar-horizontal {
+    overflow-x: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #000000 var(--muted);
+  }
+  
+  .scrollbar-horizontal::-webkit-scrollbar {
+    height: 8px;
+  }
+  
+  .scrollbar-horizontal::-webkit-scrollbar-track {
+    background: var(--muted/50);
+    border-radius: 4px;
+  }
+  
+  .scrollbar-horizontal::-webkit-scrollbar-thumb {
+    background: #000000;
+    border-radius: 4px;
+    transition: background-color 0.2s ease;
+  }
+  
+  .scrollbar-horizontal::-webkit-scrollbar-thumb:hover {
+    background: #333333;
+  }
+  
+  /* 深色模式下的水平滚动条 */
+  .dark .scrollbar-horizontal {
+    scrollbar-color: #ffffff var(--muted/50);
+  }
+  
+  .dark .scrollbar-horizontal::-webkit-scrollbar-thumb {
+    background: #ffffff;
+  }
+  
+  .dark .scrollbar-horizontal::-webkit-scrollbar-thumb:hover {
+    background: #e0e0e0;
+  }
+  
+  /* 最小滚动条样式 */
+  .scrollbar-minimal {
+    scrollbar-width: thin;
+    scrollbar-color: #000000 transparent;
+  }
+  
+  .scrollbar-minimal::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  
+  .scrollbar-minimal::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  .scrollbar-minimal::-webkit-scrollbar-thumb {
+    background: #000000;
+    border-radius: 3px;
+    transition: background-color 0.2s ease;
+  }
+  
+  .scrollbar-minimal::-webkit-scrollbar-thumb:hover {
+    background: #333333;
+  }
+  
+  /* 深色模式下的最小滚动条 */
+  .dark .scrollbar-minimal {
+    scrollbar-color: #ffffff transparent;
+  }
+  
+  .dark .scrollbar-minimal::-webkit-scrollbar-thumb {
+    background: #ffffff;
+  }
+  
+  .dark .scrollbar-minimal::-webkit-scrollbar-thumb:hover {
+    background: #e0e0e0;
+  }
+}
+
+/* SSH 状态徽章样式 */
+.badge-connected {
+  background-color: var(--badge-connected-bg);
+  color: var(--badge-connected-text);
+  border-color: var(--badge-connected-text);
+}
+
+.badge-connecting {
+  background-color: var(--badge-connecting-bg);
+  color: var(--badge-connecting-text);
+  border-color: var(--badge-connecting-text);
+}
+
+.badge-error {
+  background-color: var(--badge-error-bg);
+  color: var(--badge-error-text);
+  border-color: var(--badge-error-text);
+}
+
+.badge-disconnected {
+  background-color: var(--badge-disconnected-bg);
+  color: var(--badge-disconnected-text);
+  border-color: var(--badge-disconnected-text);
+}
+
+/* 终端容器样式 */
+.terminal-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* 终端内边距容器 */
+.terminal-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 16px;
+  background-color: transparent;
+  border-radius: 8px;
+  transition: background-color 0.2s ease;
+}
+
+/* 终端滚动条优化 */
+.xterm-viewport::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 4px;
+}
+
+.xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.3);
+  border-radius: 4px;
+  transition: background 0.2s ease;
+}
+
+.xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.5);
+}
+
+/* 暗色模式下的终端滚动条 */
+.dark .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.dark .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* 终端选中文本样式优化 */
+.xterm-selection {
+  border-radius: 2px;
+}
+
+/* 终端链接样式 */
+.xterm-decoration-link {
+  border-bottom: 1px solid currentColor;
+  text-decoration: none;
+}
+
+.xterm-decoration-link:hover {
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* 主题预览卡片 */
+.theme-preview-card {
+  transition: all 0.2s ease;
+}
+
+.theme-preview-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.theme-preview-card.active {
+  ring: 2px solid var(--primary);
+}
+
+/* ==================== 移动端基础优化 ==================== */
+
+/* 禁用触摸高亮和优化触摸性能 */
+* {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+/* 优化触摸滚动 - 禁用过度滚动效果 */
+body {
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+  touch-action: manipulation;
+}
+
+/* ==================== 安全区域支持 ==================== */
+
+/* 刘海屏和底部手势条适配 */
+.safe-area-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.safe-area-left {
+  padding-left: env(safe-area-inset-left);
+}
+
+.safe-area-right {
+  padding-right: env(safe-area-inset-right);
+}
+
+.safe-area-all {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* ==================== 移动端响应式优化 ==================== */
+
+/* 标准手机和平板优化（375px - 1024px） */
+@media (max-width: 1024px) {
+  /* 防止iOS自动缩放 - 字体至少16px */
+  body {
+    font-size: 16px;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* 输入框字体大小至少16px，防止iOS缩放 */
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
+/* 小屏手机优化（< 428px） */
+@media (max-width: 428px) {
+  /* 最小点击区域 44x44px (iOS/Android标准) */
+  button,
+  a,
+  [role="button"],
+  .clickable {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* 移动端内边距变量 */
+  :root {
+    --mobile-padding: 16px;
+  }
+}
+
+/* ==================== 移动端滚动条优化 ==================== */
+
+/* 移动端隐藏滚动条但保持功能 */
+@media (max-width: 1024px) {
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* 终端容器滚动条优化 */
+  .xterm-viewport {
+    scrollbar-width: none;
+  }
+
+  .xterm-viewport::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ==================== 触摸优化 ==================== */
+
+/* 防止双击缩放 */
+.touch-manipulation {
+  touch-action: manipulation;
+}
+
+/* 防止长按选中文本（按钮区域） */
+.no-select {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+/* ==================== Android特定优化 ==================== */
+
+@media (max-width: 1024px) {
+  /* 修复Android Chrome渲染问题 */
+  * {
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+  }
+
+  /* 优化渲染性能 */
+  body {
+    will-change: transform;
+  }
+
+  /* 防止文本被选中（按钮区域） */
+  button,
+  .btn,
+  [role="button"] {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+/* ==================== 移动端终端优化 ==================== */
+
+@media (max-width: 1024px) {
+  /* 终端容器 */
+  .terminal-container {
+    padding: 8px !important;
+  }
+
+  /* 终端字体大小 */
+  .xterm {
+    font-size: 14px !important;
+  }
+
+  /* 移动端终端行高 */
+  .xterm-screen {
+    line-height: 1.4;
+  }
+}
+
+/* ==================== 移动端通知Toast优化 ==================== */
+
+/* 为移动端Toast添加更好的样式 */
+@media (max-width: 1024px) {
+  /* 确保Toast不会被安全区域遮挡 */
+  [data-sonner-toast] {
+    margin-bottom: env(safe-area-inset-bottom, 16px) !important;
+    margin-left: 16px !important;
+    margin-right: 16px !important;
+    max-width: calc(100vw - 32px) !important;
+  }
+
+  /* Toast内容区域字体优化 */
+  [data-sonner-toast] .toast-content {
+    font-size: 14px;
+  }
+
+  /* Toast按钮增大点击区域 */
+  [data-sonner-toast] button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* ==================== 移动端弹出层优化 ==================== */
+
+@media (max-width: 1024px) {
+  /* Dialog和Sheet的遮罩层优化 */
+  .dialog-overlay,
+  .sheet-overlay {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* 移动端Dialog内容区域防止滚动穿透 */
+  [role="dialog"] {
+    max-height: 90vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* 移动端Sheet侧边栏优化 */
+  [data-side="left"][data-state="open"],
+  [data-side="right"][data-state="open"] {
+    max-width: 85vw;
+  }
+
+  /* 移动端Dropdown菜单优化 */
+  .dropdown-menu-content {
+    max-width: 90vw;
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+}
+
+/* ==================== 移动端按钮和表单优化 ==================== */
+
+@media (max-width: 1024px) {
+  /* 所有按钮确保有足够的点击区域 */
+  button,
+  [role="button"],
+  .btn {
+    min-height: 44px;
+    min-width: 44px;
+    touch-action: manipulation;
+  }
+
+  /* 表单输入框优化 */
+  input[type="text"],
+  input[type="password"],
+  input[type="email"],
+  input[type="number"],
+  textarea,
+  select {
+    min-height: 44px;
+    padding: 10px 12px;
+    font-size: 16px;
+  }
+
+  /* Switch组件增大点击区域 */
+  [role="switch"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+/* ==================== 移动端文本选择优化 ==================== */
+
+/* 移动端只对特定区域允许文本选择 */
+@media (max-width: 1024px) {
+  /* 终端区域允许选择（方便复制） */
+  .xterm,
+  .terminal-container,
+  [data-selectable="true"] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  /* 按钮和交互元素禁止选择 */
+  button,
+  a,
+  [role="button"],
+  .no-select-mobile {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+/* ==================== 移动端加载和反馈优化 ==================== */
+
+@media (max-width: 1024px) {
+  /* 加载动画优化 */
+  .loading-spinner {
+    width: 32px;
+    height: 32px;
+  }
+
+  /* 进度条高度增加，更易触摸 */
+  progress,
+  [role="progressbar"] {
+    height: 8px;
+  }
+}
+
+/* ==================== 移动端Sheet侧边栏安全区域优化 ==================== */
+
+@media (max-width: 1024px) {
+  /* 左侧Sheet从状态栏下方开始 */
+  .sheet-left-mobile {
+    padding-top: env(safe-area-inset-top) !important;
+  }
+
+  /* 底部Sheet为手势条留出空间 */
+  .sheet-bottom-mobile {
+    padding-bottom: env(safe-area-inset-bottom) !important;
+  }
+}
+
