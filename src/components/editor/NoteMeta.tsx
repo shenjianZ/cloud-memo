@@ -1,6 +1,6 @@
 import { formatDistanceToNow } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
-import { Calendar, Clock, User, Edit, Tag as TagIcon } from 'lucide-react'
+import { Calendar, User, Edit, Tag as TagIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTagStore } from '@/store/tagStore'
 

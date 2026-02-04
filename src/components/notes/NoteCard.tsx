@@ -10,12 +10,13 @@ interface NoteCardProps {
   note: Note
   onClick: () => void
   isActive?: boolean
+  onContextMenu?: (e: React.MouseEvent, noteId: string) => void
 }
 
 /**
  * 笔记卡片组件
  */
-export function NoteCard({ note, onClick, isActive }: NoteCardProps) {
+export function NoteCard({ note, onClick, isActive, onContextMenu }: NoteCardProps) {
   const { tags } = useTagStore()
   const excerpt = getPlainText(note.content)
 
@@ -31,6 +32,7 @@ export function NoteCard({ note, onClick, isActive }: NoteCardProps) {
           : "bg-card hover:bg-muted/50 border border-transparent hover:border-border"
       )}
       onClick={onClick}
+      onContextMenu={(e) => onContextMenu?.(e, note.id)}
     >
       <div className="flex items-start justify-between gap-2 mb-1">
         <h3 className={cn(

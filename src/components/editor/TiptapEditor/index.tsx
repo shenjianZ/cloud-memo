@@ -17,6 +17,7 @@ import type { TiptapContent } from '@/types/note'
 import { Loader2, Edit, Eye, Split } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { tiptapJsonToMarkdown } from '@/lib/tiptapMarkdown'
+import { extractTitleFromContent } from '@/lib/noteHelpers'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -69,6 +70,9 @@ export function TiptapEditor({ noteId, content }: TiptapEditorProps) {
       const characterCount = text.length
       updateCounts(wordCount, characterCount)
 
+      // 从内容中提取标题
+      const extractedTitle = extractTitleFromContent(json) || '未命名笔记'
+
       // 防抖自动保存
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current)
@@ -76,7 +80,11 @@ export function TiptapEditor({ noteId, content }: TiptapEditorProps) {
 
       saveTimeoutRef.current = setTimeout(async () => {
         try {
-          await updateNote(noteId, { content: json })
+          // 同时更新内容和标题
+          await updateNote(noteId, {
+            content: json,
+            title: extractedTitle,
+          })
         } catch (error) {
           console.error('Failed to save note:', error)
         }
@@ -97,6 +105,25 @@ export function TiptapEditor({ noteId, content }: TiptapEditorProps) {
       }
     }
   }, [editor, setEditor, clearEditor])
+
+  // 当 noteId 或 content 改变时，更新编辑器内容
+  useEffect(() => {
+    if (editor && noteId && content) {
+      // 检查内容是否真的改变了，避免不必要的更新
+      const currentContent = editor.getJSON()
+      const newContent = typeof content === 'string' ? content : content
+
+      // 简单比较：如果内容相同则不更新
+      if (JSON.stringify(currentContent) !== JSON.stringify(newContent)) {
+        // 使用 setContent 前先重置编辑器，确保状态完全更新
+        editor.commands.setContent(newContent, {
+          emitUpdate: false, // 不触发 onUpdate 回调，避免覆盖正在编辑的内容
+        })
+        // 重置历史记录，避免撤销到上一个笔记的内容
+        editor.view.dispatch(editor.state.tr.setMeta('addToHistory', false))
+      }
+    }
+  }, [noteId, content, editor])
 
   // 将 Tiptap JSON 转换为 Markdown 用于预览
   const markdownContent = tiptapJsonToMarkdown(content)

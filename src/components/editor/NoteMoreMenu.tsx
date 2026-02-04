@@ -1,6 +1,5 @@
 import { useRef, useEffect } from 'react'
 import { Download, Trash2, Copy, ExternalLink } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { useNoteStore } from '@/store/noteStore'
 import { toast } from 'sonner'
 import { tiptapJsonToMarkdown } from '@/lib/tiptapMarkdown'

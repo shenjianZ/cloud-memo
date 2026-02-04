@@ -58,6 +58,19 @@ function App() {
     }
   }, [navigate, toggleSidebar])
 
+  useEffect(() => {
+    // 禁用全局浏览器右键菜单
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault()
+    }
+
+    document.addEventListener('contextmenu', handleContextMenu)
+
+    return () => {
+      document.removeEventListener('contextmenu', handleContextMenu)
+    }
+  }, [])
+
   return (
     <>
       <RouteWatcher />

@@ -1,10 +1,12 @@
 pub mod keybindings;
 pub mod notes;
+pub mod folders;
 pub mod editor_settings;
 pub mod tag;
 
 pub use keybindings::*;
 pub use notes::*;
+pub use folders::*;
 pub use editor_settings::*;
 pub use tag::*;
 

@@ -18,6 +18,12 @@ pub enum AppError {
     #[error("Tag not found: {0}")]
     TagNotFound(String),
 
+    #[error("Not found: {0}")]
+    NotFound(String),
+
+    #[error("Invalid operation: {0}")]
+    InvalidOperation(String),
+
     #[error("Invalid input: {0}")]
     InvalidInput(String),
 

@@ -6,8 +6,8 @@ mod services;
 
 use tauri::Manager;
 use database::init_db_pool;
-use database::repositories::{NoteRepository, KeybindingRepository, EditorSettingsRepository, TagRepository};
-use services::{NoteService, KeybindingService, EditorSettingsService, TagService};
+use database::repositories::{NoteRepository, FolderRepository, KeybindingRepository, EditorSettingsRepository, TagRepository};
+use services::{NoteService, FolderService, KeybindingService, EditorSettingsService, TagService};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -35,6 +35,10 @@ pub fn run() {
             let note_repo = NoteRepository::new(pool.clone());
             let note_service = NoteService::new(note_repo);
 
+            // 初始化文件夹服务
+            let folder_repo = FolderRepository::new(pool.clone());
+            let folder_service = FolderService::new(folder_repo);
+
             // 初始化快捷键服务（使用文件存储）
             let keybinding_storage_path = app_data_dir.join("keybindings.json");
             let keybinding_repo = KeybindingRepository::new(keybinding_storage_path);
@@ -50,6 +54,7 @@ pub fn run() {
 
             // 注册服务到 Tauri 状态
             app.manage(note_service);
+            app.manage(folder_service);
             app.manage(keybinding_service);
             app.manage(editor_settings_service);
             app.manage(tag_service);
@@ -72,6 +77,15 @@ pub fn run() {
             commands::delete_note,
             commands::list_notes,
             commands::search_notes,
+            commands::move_notes_to_folder,
+            // 文件夹命令
+            commands::create_folder,
+            commands::get_folder,
+            commands::update_folder,
+            commands::delete_folder,
+            commands::list_folders,
+            commands::move_folder,
+            commands::get_folder_path,
             // 快捷键命令（优化后的命名）
             commands::load_keybindings,
             commands::save_keybindings,

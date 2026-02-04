@@ -2,7 +2,6 @@ import { useNavigate } from 'react-router-dom'
 import { FileText, Plus, Keyboard } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useNoteStore } from '@/store/noteStore'
-import { getNoteTitle, getPlainText } from '@/lib/noteHelpers'
 
 export default function Home() {
   const navigate = useNavigate()
@@ -13,7 +12,7 @@ export default function Home() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 px-8 py-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">欢迎使用 Markdown Notes</h1>
         <p className="text-muted-foreground">
@@ -71,26 +70,6 @@ export default function Home() {
           </div>
         </div>
       </div>
-
-      {notes.length > 0 && (
-        <div className="rounded-lg border p-4">
-          <h3 className="font-semibold mb-4">最近笔记</h3>
-          <div className="space-y-2">
-            {notes.slice(0, 5).map((note) => (
-              <button
-                key={note.id}
-                onClick={() => navigate(`/editor/${note.id}`)}
-                className="w-full text-left p-3 rounded-lg hover:bg-muted/50 transition-colors"
-              >
-                <div className="font-medium">{getNoteTitle(note)}</div>
-                <div className="text-sm text-muted-foreground truncate">
-                  {getPlainText(note.content)}
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   )
 }

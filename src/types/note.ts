@@ -51,6 +51,9 @@ export interface NoteFolder {
   id: string
   name: string
   parentId: string | null
+  color?: string
+  icon?: string
+  sortOrder?: number
   createdAt: number
 }
 

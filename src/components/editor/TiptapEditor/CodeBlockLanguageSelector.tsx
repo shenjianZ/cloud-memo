@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Code, ChevronDown, X } from 'lucide-react'
+import { Code, ChevronDown } from 'lucide-react'
 import type { Editor } from '@tiptap/react'
 
 // 支持的编程语言列表

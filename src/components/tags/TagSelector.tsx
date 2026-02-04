@@ -25,7 +25,7 @@ interface TagSelectorProps {
   showColorPicker?: boolean
 }
 
-export function TagSelector({ noteId, selectedTags, onTagsChange, showColorPicker = true }: TagSelectorProps) {
+export function TagSelector({ noteId: _noteId, selectedTags, onTagsChange, showColorPicker = true }: TagSelectorProps) {
   const { tags, loadTags, createTag } = useTagStore()
   const [isOpen, setIsOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')

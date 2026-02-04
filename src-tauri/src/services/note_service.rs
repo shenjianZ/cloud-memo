@@ -1,5 +1,5 @@
 use crate::database::repositories::NoteRepository;
-use crate::models::{Note, CreateNoteRequest, UpdateNoteRequest};
+use crate::models::{Note, CreateNoteRequest, UpdateNoteRequest, MoveNotesRequest};
 use crate::models::error::{Result, AppError};
 use uuid::Uuid;
 
@@ -99,6 +99,28 @@ impl NoteService {
             return Ok(vec![]);
         }
         self.repo.search(query)
+    }
+
+    /// 批量移动笔记到文件夹
+    pub fn move_notes_to_folder(&self, req: MoveNotesRequest) -> Result<Vec<Note>> {
+        let mut moved_notes = Vec::new();
+
+        for note_id in req.note_ids {
+            let update_req = UpdateNoteRequest {
+                id: note_id.clone(),
+                title: None,
+                content: None,
+                folder_id: req.folder_id.clone(),
+                is_favorite: None,
+                is_pinned: None,
+                author: None,
+            };
+
+            let note = self.update_note(update_req)?;
+            moved_notes.push(note);
+        }
+
+        Ok(moved_notes)
     }
 
     // ===== 工具方法 =====

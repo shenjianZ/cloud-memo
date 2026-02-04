@@ -3,6 +3,7 @@ import { MainLayout } from './components/layout/MainLayout'
 import Home from './pages/Home'
 import { Editor } from './pages/Editor'
 import AllNotes from './pages/AllNotes'
+import Favorites from './pages/Favorites'
 import Settings from './pages/Settings'
 
 export default function AppRoutes() {
@@ -12,6 +13,7 @@ export default function AppRoutes() {
         <Route index element={<Home />} />
         <Route path="editor/:noteId" element={<Editor />} />
         <Route path="notes" element={<AllNotes />} />
+        <Route path="favorites" element={<Favorites />} />
         <Route path="settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

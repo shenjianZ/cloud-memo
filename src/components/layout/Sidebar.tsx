@@ -1,18 +1,21 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { Search, Settings, ChevronDown, ChevronRight, Folder, FolderOpen, Plus, Inbox, Star } from 'lucide-react'
+import { Search, Settings, ChevronDown, ChevronRight, Plus, Star, FolderPlus, Home } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useNoteStore } from '@/store/noteStore'
+import { useContextMenuStore } from '@/store/contextMenuStore'
 import { cn } from '@/lib/utils'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { NoteCard } from '../notes/NoteCard'
+import { NoteItem } from '../notes/NoteItem'
+import { FolderNode } from './FolderNode'
+import { FolderContextMenu, NoteContextMenu } from '@/components/context-menu'
 import { getNoteTitle } from '@/lib/noteHelpers'
 
-interface FolderNode {
+interface FolderTree {
   id: string
   name: string
   parentId: string | null
-  children: FolderNode[]
+  children: FolderTree[]
 }
 
 /**
@@ -22,31 +25,66 @@ interface FolderNode {
 export function Sidebar() {
   const [searchQuery, setSearchQuery] = useState('')
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
-  const { folders, notes, createNote, loadNotesFromStorage } = useNoteStore()
+  const { folders, notes, createNote, createFolder, loadNotesFromStorage } = useNoteStore()
+  const {
+    folderContextMenu,
+    noteContextMenu,
+    hideFolderContextMenu,
+    hideNoteContextMenu,
+    showNoteContextMenu,
+  } = useContextMenuStore()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
-  const [foldersCollapsed, setFoldersCollapsed] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const isCreatingRef = useRef(false) // 使用 ref 防止重复创建
+  const [currentPath, setCurrentPath] = useState(window.location.hash.slice(1) || '/')
 
-  // 获取当前活动笔记 ID
+  // 获取当前活动笔记 ID 和当前路径
   const activeNoteId = searchParams.get('noteId')
   const folderFilter = searchParams.get('folder')
-  const favoritesFilter = searchParams.get('filter') === 'favorites'
+  const isHomePage = currentPath === '/'
+  const isFavoritesPage = currentPath === '/favorites'
 
   // 加载笔记数据
   useEffect(() => {
+    // 清除旧的 localStorage 文件夹数据（迁移到数据库后不再需要）
+    const storage = localStorage.getItem('markdown-notes-storage')
+    if (storage) {
+      try {
+        const parsed = JSON.parse(storage)
+        if (parsed.state && parsed.state.folders) {
+          delete parsed.state.folders
+          localStorage.setItem('markdown-notes-storage', JSON.stringify(parsed))
+        }
+      } catch (e) {
+        console.error('Failed to clear old folders from localStorage:', e)
+      }
+    }
+
     loadNotesFromStorage()
   }, [loadNotesFromStorage])
 
+  // 监听路由变化以更新高亮状态
+  useEffect(() => {
+    const handleHashChange = () => {
+      setCurrentPath(window.location.hash.slice(1) || '/')
+    }
+
+    window.addEventListener('hashchange', handleHashChange)
+
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange)
+    }
+  }, [])
+
   // 构建文件夹树结构
-  const buildTree = (): FolderNode[] => {
-    const map = new Map<string, FolderNode>()
-    const roots: FolderNode[] = []
+  const buildTree = (): FolderTree[] => {
+    const map = new Map<string, FolderTree>()
+    const roots: FolderTree[] = []
 
     folders.forEach(folder => {
-      map.set(folder.id, { ...folder, children: [] })
+      map.set(folder.id, { id: folder.id, name: folder.name, parentId: folder.parentId, children: [] })
     })
 
     folders.forEach(folder => {
@@ -76,47 +114,23 @@ export function Sidebar() {
     })
   }
 
-  const renderFolder = (folder: FolderNode, level: number = 0) => {
+  const renderFolder = (folder: FolderTree, level: number = 0) => {
     const isExpanded = expandedFolders.has(folder.id)
-    const hasChildren = folder.children.length > 0
     const isActive = folderFilter === folder.id
 
     return (
-      <div key={folder.id}>
-        <div
-          className={cn(
-            "flex items-center gap-2 px-3 py-2 hover:bg-muted/50 cursor-pointer rounded-lg transition-colors text-sm",
-            isActive && "bg-accent text-accent-foreground"
-          )}
-          style={{ paddingLeft: `${level * 12 + 12}px` }}
-          onClick={() => {
-            if (hasChildren) {
-              toggleFolder(folder.id)
-            }
-            navigate(`/?folder=${folder.id}`)
-          }}
-        >
-          {hasChildren && (
-            isExpanded ? (
-              <ChevronDown className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-            ) : (
-              <ChevronRight className="w-3 h-3 text-muted-foreground flex-shrink-0" />
-            )
-          )}
-          {isExpanded ? (
-            <FolderOpen className="w-4 h-4 text-blue-500 flex-shrink-0" />
-          ) : (
-            <Folder className="w-4 h-4 text-blue-500 flex-shrink-0" />
-          )}
-          <span className="font-medium truncate flex-1">{folder.name}</span>
-        </div>
-
-        {isExpanded && hasChildren && (
-          <div>
-            {folder.children.map(child => renderFolder(child, level + 1))}
-          </div>
-        )}
-      </div>
+      <FolderNode
+        key={folder.id}
+        folder={folder}
+        level={level}
+        isActive={isActive}
+        isExpanded={isExpanded}
+        expandedFolders={expandedFolders}
+        onToggle={toggleFolder}
+        onClick={(folderId) => {
+          navigate(`/?folder=${folderId}`)
+        }}
+      />
     )
   }
 
@@ -139,10 +153,6 @@ export function Sidebar() {
       result = result.filter(n => n.folder === folderFilter)
     }
 
-    if (favoritesFilter) {
-      result = result.filter(n => n.isFavorite)
-    }
-
     return result
   })()
 
@@ -150,6 +160,18 @@ export function Sidebar() {
   const sortedNotes = [...filteredNotes].sort(
     (a, b) => b.updatedAt - a.updatedAt
   )
+
+  // 创建新文件夹
+  const handleCreateFolder = useCallback(async () => {
+    const name = prompt('请输入文件夹名称:', '新建文件夹')
+    if (!name || !name.trim()) return
+
+    try {
+      await createFolder(name.trim())
+    } catch (error) {
+      console.error('Failed to create folder:', error)
+    }
+  }, [createFolder])
 
   // 创建新笔记 - 使用严格防重复机制
   const handleCreateNote = useCallback(async () => {
@@ -166,7 +188,7 @@ export function Sidebar() {
     try {
       const newNote = await createNote({
         title: '未命名笔记',
-        content: { type: 'doc', content: [] },
+        content: { type: 'doc', content: [{ type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: '未命名笔记' }] }] },
       })
       navigate(`/editor/${newNote.id}`)
     } catch (error) {
@@ -243,109 +265,121 @@ export function Sidebar() {
       <div className="flex-1 overflow-y-auto custom-scrollbar">
         {!isSidebarCollapsed && (
           <>
-            {/* 快捷入口 + 文件夹区域 */}
-            <div className="border-b border-border/50">
-              {/* 快捷入口 */}
-              <div className="px-2 py-2 space-y-1">
-                <div
-                  className={cn(
-                    "flex items-center gap-2 px-3 py-2 hover:bg-muted/50 cursor-pointer rounded-lg transition-colors text-sm",
-                    !folderFilter && !favoritesFilter && "bg-accent text-accent-foreground"
-                  )}
-                  onClick={() => navigate('/')}
-                >
-                  <Inbox className="w-4 h-4 text-muted-foreground" />
-                  <span className="font-medium">全部笔记</span>
-                  <span className="ml-auto text-xs text-muted-foreground">{notes.length}</span>
-                </div>
-
-                <div
-                  className={cn(
-                    "flex items-center gap-2 px-3 py-2 hover:bg-muted/50 cursor-pointer rounded-lg transition-colors text-sm",
-                    favoritesFilter && "bg-accent text-accent-foreground"
-                  )}
-                  onClick={() => navigate('/?filter=favorites')}
-                >
-                  <Star className="w-4 h-4 text-yellow-500" />
-                  <span className="font-medium">收藏</span>
-                  <span className="ml-auto text-xs text-muted-foreground">
-                    {notes.filter(n => n.isFavorite).length}
-                  </span>
-                </div>
-              </div>
-
-              {/* 文件夹折叠按钮 */}
+            {/* 快捷入口 */}
+            <div className="px-2 py-2 space-y-1 border-b border-border/50">
               <div
-                className="flex items-center gap-2 px-3 py-2 hover:bg-muted/50 cursor-pointer text-xs font-medium text-muted-foreground uppercase tracking-wider"
-                onClick={() => setFoldersCollapsed(!foldersCollapsed)}
+                className={cn(
+                  "flex items-center gap-2 px-3 py-2 hover:bg-muted/50 cursor-pointer rounded-lg transition-colors text-sm",
+                  isHomePage && "bg-accent text-accent-foreground"
+                )}
+                onClick={() => navigate('/')}
               >
-                {foldersCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                文件夹
+                <Home className="w-4 h-4 text-blue-500" />
+                <span className="font-medium">首页</span>
               </div>
-
-              {/* 文件夹树 */}
-              {!foldersCollapsed && tree.length > 0 ? (
-                <div className="pb-2">
-                  {tree.map(folder => renderFolder(folder))}
-                </div>
-              ) : (
-                !foldersCollapsed && tree.length === 0 && (
-                  <div className="text-center text-muted-foreground text-xs py-4">
-                    暂无文件夹
-                  </div>
-                )
-              )}
+              <div
+                className={cn(
+                  "flex items-center gap-2 px-3 py-2 hover:bg-muted/50 cursor-pointer rounded-lg transition-colors text-sm",
+                  isFavoritesPage && "bg-accent text-accent-foreground"
+                )}
+                onClick={() => navigate('/favorites')}
+              >
+                <Star className="w-4 h-4 text-yellow-500" />
+                <span className="font-medium">收藏</span>
+                <span className="ml-auto text-xs text-muted-foreground">
+                  {notes.filter(n => n.isFavorite).length}
+                </span>
+              </div>
             </div>
 
-            {/* 笔记列表 */}
+            {/* 笔记列表（包含文件夹和笔记） */}
             <div className="px-2 py-2">
               <div className="flex items-center justify-between mb-2 px-1">
                 <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                  笔记
+                  笔记列表
                 </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 w-7 p-0"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    handleCreateNote()
-                  }}
-                  disabled={isLoading}
-                  title="新建笔记"
-                  type="button" // 确保不会触发表单提交
-                >
-                  <Plus className="w-4 h-4" />
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      handleCreateNote()
+                    }}
+                    disabled={isLoading}
+                    title="新建笔记"
+                    type="button"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      handleCreateFolder()
+                    }}
+                    title="新建文件夹"
+                    type="button"
+                  >
+                    <FolderPlus className="w-4 h-4" />
+                  </Button>
+                </div>
               </div>
 
-              <div className="space-y-1">
-                {sortedNotes.length > 0 ? (
-                  sortedNotes.map((note) => (
-                    <NoteCard
-                      key={note.id}
-                      note={note}
-                      onClick={() => navigate(`/editor/${note.id}`)}
-                      isActive={activeNoteId === note.id}
-                    />
-                  ))
-                ) : (
-                  <div className="text-center text-muted-foreground text-sm py-8">
-                    {searchQuery
-                      ? '没有找到匹配的笔记'
-                      : favoritesFilter
-                      ? '暂无收藏的笔记'
-                      : folderFilter
-                      ? '此文件夹为空'
-                      : '暂无笔记'}
+              {/* 文件夹树（包含文件夹和笔记） */}
+              {tree.length > 0 ? (
+                <div className="space-y-1">
+                  {tree.map(folder => renderFolder(folder))}
+                </div>
+              ) : (
+                <div className="text-center text-muted-foreground text-xs py-4">
+                  暂无文件夹
+                </div>
+              )}
+
+              {/* 根目录笔记（不在任何文件夹中的笔记） */}
+              {(() => {
+                const rootNotes = sortedNotes.filter(n => !n.folder)
+                if (rootNotes.length === 0) return null
+
+                return (
+                  <div className="mt-2 space-y-1">
+                    {rootNotes.map((note) => (
+                      <NoteItem
+                        key={note.id}
+                        note={note}
+                        level={0}
+                        onClick={() => navigate(`/editor/${note.id}`)}
+                        onContextMenu={(e) => showNoteContextMenu({ x: e.clientX, y: e.clientY }, note.id)}
+                        isActive={activeNoteId === note.id}
+                      />
+                    ))}
                   </div>
-                )}
-              </div>
+                )
+              })()}
             </div>
           </>
         )}
       </div>
+
+      {/* 右键菜单容器 */}
+      <FolderContextMenu
+        position={folderContextMenu.position}
+        isVisible={folderContextMenu.isVisible}
+        onClose={hideFolderContextMenu}
+        folderId={folderContextMenu.folderId}
+      />
+      <NoteContextMenu
+        position={noteContextMenu.position}
+        isVisible={noteContextMenu.isVisible}
+        onClose={hideNoteContextMenu}
+        noteId={noteContextMenu.noteId}
+      />
     </aside>
   )
 }

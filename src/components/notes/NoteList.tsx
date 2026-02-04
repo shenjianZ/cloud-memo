@@ -77,7 +77,8 @@ export function NoteList() {
 
     try {
       const newNote = await createNote({
-        content: { type: 'doc', content: [] },
+        title: '未命名笔记',
+        content: { type: 'doc', content: [{ type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: '未命名笔记' }] }] },
       })
       navigate(`/editor/${newNote.id}`)
     } catch (error) {

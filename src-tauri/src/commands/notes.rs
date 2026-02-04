@@ -1,5 +1,5 @@
 use crate::services::NoteService;
-use crate::models::{Note, CreateNoteRequest, UpdateNoteRequest};
+use crate::models::{Note, CreateNoteRequest, UpdateNoteRequest, MoveNotesRequest};
 use tauri::State;
 
 /// Note service 类型别名
@@ -61,5 +61,15 @@ pub async fn search_notes(
     service: NoteSvc<'_>,
 ) -> std::result::Result<Vec<Note>, String> {
     service.search_notes(&query)
+        .map_err(|e| e.to_string())
+}
+
+/// 批量移动笔记到文件夹
+#[tauri::command]
+pub async fn move_notes_to_folder(
+    req: MoveNotesRequest,
+    service: NoteSvc<'_>,
+) -> std::result::Result<Vec<Note>, String> {
+    service.move_notes_to_folder(req)
         .map_err(|e| e.to_string())
 }

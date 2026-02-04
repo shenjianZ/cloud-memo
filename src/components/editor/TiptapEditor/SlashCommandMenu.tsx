@@ -202,7 +202,7 @@ export function SlashCommandMenu({ editor }: SlashCommandMenuProps) {
         // 如果删除了 / 或光标移到了其他位置，关闭菜单
         if (lastChar !== '/' || (slashPosRef.current !== null && selection.from < slashPosRef.current)) {
           // 但要确保我们还在有效范围内
-          if (selection.from < slashPosRef.current) {
+          if (slashPosRef.current !== null && selection.from < slashPosRef.current) {
             closeMenu()
           }
         }

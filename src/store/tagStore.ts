@@ -49,7 +49,7 @@ interface TagState {
   setNoteTags: (noteId: string, tagIds: string[]) => Promise<void>
 }
 
-export const useTagStore = create<TagState>((set, get) => ({
+export const useTagStore = create<TagState>((set) => ({
   tags: [],
   isLoading: false,
   error: null,

@@ -1,8 +1,10 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import * as noteApi from '@/services/noteApi'
+import * as folderApi from '@/services/folderApi'
 import { useTagStore } from './tagStore'
 import type { Note as ApiNote, CreateNoteRequest, UpdateNoteRequest } from '@/services/noteApi'
+import type { UpdateFolderRequest } from '@/services/folderApi'
 import type { Note, NoteFolder, NoteFilter } from '@/types/note'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
@@ -113,7 +115,14 @@ interface NoteStore {
 
   // 文件夹操作
   createFolder: (name: string, parentId?: string) => Promise<NoteFolder>
+  updateFolder: (id: string, updates: Partial<NoteFolder>) => Promise<void>
   deleteFolder: (id: string) => Promise<void>
+  moveFolder: (id: string, newParentId: string | null) => Promise<void>
+  setFolderColor: (id: string, color: string) => Promise<void>
+
+  // 笔记移动
+  moveNote: (noteId: string, folderId: string | null) => Promise<void>
+  moveNotes: (noteIds: string[], folderId: string | null) => Promise<void>
 
   // 查询
   getNote: (id: string) => Note | undefined
@@ -235,24 +244,137 @@ export const useNoteStore = create<NoteStore>()(
       },
 
       createFolder: async (name, parentId) => {
-        const newFolder: NoteFolder = {
-          id: crypto.randomUUID(),
-          name,
-          parentId: parentId || null,
-          createdAt: Date.now(),
+        set({ isLoading: true })
+        try {
+          const apiFolder = await folderApi.createFolder({ name, parentId })
+          // 将后端 Folder 类型转换为前端 NoteFolder 类型
+          const folder: NoteFolder = {
+            id: apiFolder.id,
+            name: apiFolder.name,
+            parentId: apiFolder.parentId || null,
+            color: apiFolder.color,
+            icon: apiFolder.icon,
+            sortOrder: apiFolder.sortOrder,
+            createdAt: apiFolder.createdAt * 1000, // 转换秒级时间戳为毫秒
+          }
+          set((state) => ({
+            folders: [...state.folders, folder],
+            isLoading: false,
+          }))
+          return folder
+        } catch (error) {
+          console.error('Failed to create folder:', error)
+          set({ isLoading: false })
+          throw error
         }
-
-        set((state) => ({
-          folders: [...state.folders, newFolder],
-        }))
-
-        return newFolder
       },
 
       deleteFolder: async (id) => {
-        set((state) => ({
-          folders: state.folders.filter((f) => f.id !== id),
-        }))
+        set({ isLoading: true })
+        try {
+          await folderApi.deleteFolder(id)
+          set((state) => ({
+            folders: state.folders.filter((f) => f.id !== id),
+            isLoading: false,
+          }))
+        } catch (error) {
+          console.error('Failed to delete folder:', error)
+          set({ isLoading: false })
+          throw error
+        }
+      },
+
+      updateFolder: async (id, updates) => {
+        set({ isLoading: true })
+        try {
+          // 构建 UpdateFolderRequest，只包含定义的字段
+          const req: UpdateFolderRequest = { id }
+          if (updates.name !== undefined) req.name = updates.name
+          if (updates.parentId !== undefined) req.parentId = updates.parentId || undefined
+          if (updates.color !== undefined) req.color = updates.color
+          if (updates.icon !== undefined) req.icon = updates.icon
+          if (updates.sortOrder !== undefined) req.sortOrder = updates.sortOrder
+
+          await folderApi.updateFolder(req)
+          set((state) => ({
+            folders: state.folders.map((f) =>
+              f.id === id ? { ...f, ...updates } : f
+            ),
+            isLoading: false,
+          }))
+        } catch (error) {
+          console.error('Failed to update folder:', error)
+          set({ isLoading: false })
+          throw error
+        }
+      },
+
+      moveFolder: async (id, newParentId) => {
+        set({ isLoading: true })
+        try {
+          await folderApi.moveFolder({ id, newParentId: newParentId || undefined })
+          set((state) => ({
+            folders: state.folders.map((f) =>
+              f.id === id ? { ...f, parentId: newParentId } : f
+            ),
+            isLoading: false,
+          }))
+        } catch (error) {
+          console.error('Failed to move folder:', error)
+          set({ isLoading: false })
+          throw error
+        }
+      },
+
+      setFolderColor: async (id, color) => {
+        set({ isLoading: true })
+        try {
+          await folderApi.updateFolder({ id, color })
+          set((state) => ({
+            folders: state.folders.map((f) =>
+              f.id === id ? { ...f, color } : f
+            ),
+            isLoading: false,
+          }))
+        } catch (error) {
+          console.error('Failed to set folder color:', error)
+          set({ isLoading: false })
+          throw error
+        }
+      },
+
+      moveNote: async (noteId, folderId) => {
+        set({ isLoading: true })
+        try {
+          await noteApi.updateNote({ id: noteId, folderId: folderId || undefined })
+          set((state) => ({
+            notes: state.notes.map((n) =>
+              n.id === noteId ? { ...n, folder: folderId || undefined } : n
+            ),
+            isLoading: false,
+          }))
+        } catch (error) {
+          console.error('Failed to move note:', error)
+          set({ isLoading: false })
+          throw error
+        }
+      },
+
+      moveNotes: async (noteIds, folderId) => {
+        set({ isLoading: true })
+        try {
+          await folderApi.moveNotesToFolder({ noteIds, folderId: folderId || undefined })
+          set((state) => ({
+            notes: state.notes.map((n) =>
+              noteIds.includes(n.id) ? { ...n, folder: folderId || undefined } : n
+            ),
+            isLoading: false,
+          }))
+        } catch (error) {
+          console.error('Failed to move notes:', error)
+          set({ isLoading: false })
+          throw error
+        }
       },
 
       getNote: (id) => {
@@ -320,10 +442,24 @@ export const useNoteStore = create<NoteStore>()(
       loadNotesFromStorage: async () => {
         set({ isLoading: true })
         try {
+          // 加载笔记
           const apiNotes = await noteApi.listNotes()
           const tagStore = useTagStore.getState()
           const notes = await Promise.all(apiNotes.map(apiNote => apiNoteToNote(apiNote, tagStore)))
-          set({ notes, isLoading: false, isStorageLoaded: true })
+
+          // 加载文件夹
+          const apiFolders = await folderApi.listFolders()
+          const folders: NoteFolder[] = apiFolders.map(apiFolder => ({
+            id: apiFolder.id,
+            name: apiFolder.name,
+            parentId: apiFolder.parentId || null,
+            color: apiFolder.color,
+            icon: apiFolder.icon,
+            sortOrder: apiFolder.sortOrder,
+            createdAt: apiFolder.createdAt * 1000, // 转换秒级时间戳为毫秒
+          }))
+
+          set({ notes, folders, isLoading: false, isStorageLoaded: true })
         } catch (error) {
           console.error('Failed to load notes from storage:', error)
           set({ isLoading: false, isStorageLoaded: true })
@@ -407,9 +543,8 @@ export const useNoteStore = create<NoteStore>()(
     {
       name: 'markdown-notes-storage',
       partialize: (state) => ({
-        folders: state.folders,
+        //Folders are loaded from database, not persisted in localStorage
         activeNoteId: state.activeNoteId,
-        // Notes are loaded from database, not persisted in localStorage
       }),
     }
   )

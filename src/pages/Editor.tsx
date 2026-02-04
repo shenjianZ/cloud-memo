@@ -37,7 +37,8 @@ export function Editor() {
         } else if (noteId === 'new') {
           // 创建新笔记
           const newNote = await createNote({
-            content: { type: 'doc', content: [] },
+            title: '未命名笔记',
+            content: { type: 'doc', content: [{ type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: '未命名笔记' }] }] },
           })
           // 更新 URL
           navigate(`/editor/${newNote.id}`, { replace: true })

@@ -11,7 +11,7 @@ export interface EditorSettingsState {
   updateSettings: (updates: editorSettingsApi.UpdateEditorSettingsRequest) => Promise<void>
 }
 
-export const useEditorSettingsStore = create<EditorSettingsState>((set, get) => ({
+export const useEditorSettingsStore = create<EditorSettingsState>((set) => ({
   settings: null,
   isLoading: false,
   error: null,

@@ -17,7 +17,7 @@ interface TagPopoverProps {
   onClose: () => void
 }
 
-export function TagPopover({ noteId, selectedTags, onTagsChange, onClose }: TagPopoverProps) {
+export function TagPopover({ noteId: _noteId, selectedTags, onTagsChange, onClose }: TagPopoverProps) {
   const { tags, loadTags, createTag } = useTagStore()
   const [searchQuery, setSearchQuery] = useState('')
   const [isCreating, setIsCreating] = useState(false)

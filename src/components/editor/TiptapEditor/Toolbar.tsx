@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import {
   Heading1,
   Heading2,
@@ -18,10 +19,42 @@ import {
   RemoveFormatting,
   Tag as TagIcon,
   MoreVertical,
+  Plus,
+  Trash2,
+  CornerDownLeft,
+  CornerDownRight,
+  CornerUpLeft,
+  CornerUpRight,
+  Copy,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+
+interface DropdownButton {
+  icon: React.ComponentType<{ className?: string }>
+  title: string
+  type: 'dropdown'
+  isActive: () => boolean
+  dropdownContent: React.ReactNode
+}
+
+interface ActionButton {
+  icon: React.ComponentType<{ className?: string }>
+  title: string
+  type?: 'action'
+  action: () => void
+  isActive: () => boolean
+  disabled?: () => boolean
+}
+
+type ToolbarButton = ActionButton | DropdownButton
 
 interface ToolbarProps {
   editor: any
@@ -36,7 +69,29 @@ interface ToolbarProps {
 export function Toolbar({ editor, onToggleTags, onToggleMore }: ToolbarProps) {
   if (!editor) return null
 
-  const toolbarGroups = [
+  // 跟踪光标是否在表格内
+  const [isInTable, setIsInTable] = useState(false)
+
+  // 监听编辑器的选择变化，实时更新状态
+  useEffect(() => {
+    const updateTableStatus = () => {
+      setIsInTable(editor.isActive('table'))
+    }
+
+    // 初始化状态
+    updateTableStatus()
+
+    // 监听选择更新和事务变化
+    editor.on('selectionUpdate', updateTableStatus)
+    editor.on('transaction', updateTableStatus)
+
+    return () => {
+      editor.off('selectionUpdate', updateTableStatus)
+      editor.off('transaction', updateTableStatus)
+    }
+  }, [editor])
+
+  const toolbarGroups: { buttons: ToolbarButton[] }[] = [
     // 标题
     {
       buttons: [
@@ -141,9 +196,69 @@ export function Toolbar({ editor, onToggleTags, onToggleMore }: ToolbarProps) {
         },
         {
           icon: Table,
-          title: '插入表格',
-          action: () => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
-          isActive: () => editor.isActive('table'),
+          title: '表格',
+          type: 'dropdown',
+          isActive: () => isInTable,
+          dropdownContent: (
+            <>
+              <DropdownMenuItem onClick={() => editor.chain().focus().insertTable({ rows: 2, cols: 2, withHeaderRow: true }).run()}>
+                <Plus className="w-4 h-4 mr-2" />
+                插入表格 (2x2)
+              </DropdownMenuItem>
+              {isInTable && (
+                <>
+                  <div className="border-t border-border/50 my-1" />
+                  <DropdownMenuItem onClick={() => editor.chain().focus().addRowBefore().run()}>
+                    <CornerUpLeft className="w-4 h-4 mr-2" />
+                    在上方添加行
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => editor.chain().focus().addRowAfter().run()}>
+                    <CornerUpRight className="w-4 h-4 mr-2" />
+                    在下方添加行
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => editor.chain().focus().duplicateRow().run()}>
+                    <Copy className="w-4 h-4 mr-2" />
+                    复制当前行
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => editor.chain().focus().deleteRow().run()}>
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    删除当前行
+                  </DropdownMenuItem>
+                  <div className="border-t border-border/50 my-1" />
+                  <DropdownMenuItem onClick={() => editor.chain().focus().addColumnBefore().run()}>
+                    <CornerDownLeft className="w-4 h-4 mr-2" />
+                    在左侧添加列
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => editor.chain().focus().addColumnAfter().run()}>
+                    <CornerDownRight className="w-4 h-4 mr-2" />
+                    在右侧添加列
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => editor.chain().focus().duplicateColumn().run()}>
+                    <Copy className="w-4 h-4 mr-2" />
+                    复制当前列
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => editor.chain().focus().deleteColumn().run()}>
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    删除当前列
+                  </DropdownMenuItem>
+                  <div className="border-t border-border/50 my-1" />
+                  <DropdownMenuItem onClick={() => editor.chain().focus().toggleHeaderColumn().run()}>
+                    切换表头列
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => editor.chain().focus().toggleHeaderRow().run()}>
+                    切换表头行
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => editor.chain().focus().toggleCellMerge().run()}>
+                    合并/拆分单元格
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => editor.chain().focus().deleteTable().run()}>
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    删除表格
+                  </DropdownMenuItem>
+                </>
+              )}
+            </>
+          ),
         },
       ],
     },
@@ -173,16 +288,41 @@ export function Toolbar({ editor, onToggleTags, onToggleMore }: ToolbarProps) {
       <div className="flex items-center gap-1 px-3 py-2 flex-wrap">
         {toolbarGroups.map((group, groupIndex) => (
           <div key={groupIndex} className="flex items-center gap-1">
-            {group.buttons.map((button, buttonIndex) => (
-              <ToolbarButton
-                key={buttonIndex}
-                icon={button.icon}
-                title={button.title}
-                isActive={button.isActive()}
-                onClick={button.action}
-                disabled={'disabled' in button ? (button as any).disabled?.() || false : false}
-              />
-            ))}
+            {group.buttons.map((button, buttonIndex) => {
+              if (button.type === 'dropdown') {
+                return (
+                  <DropdownMenu key={buttonIndex}>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className={cn(
+                          "h-8 w-8 p-0",
+                          button.isActive() && "bg-accent text-accent-foreground"
+                        )}
+                        title={button.title}
+                      >
+                        <button.icon className="w-4 h-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent>
+                      {button.dropdownContent}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )
+              }
+
+              return (
+                <ToolbarButton
+                  key={buttonIndex}
+                  icon={button.icon}
+                  title={button.title}
+                  isActive={button.isActive()}
+                  onClick={button.action}
+                  disabled={button.disabled?.() || false}
+                />
+              )
+            })}
             {groupIndex < toolbarGroups.length - 1 && (
               <Separator orientation="vertical" className="h-6 mx-1" />
             )}

@@ -16,30 +16,10 @@ import TableRow from '@tiptap/extension-table-row'
 import TableHeader from '@tiptap/extension-table-header'
 import TableCell from '@tiptap/extension-table-cell'
 import type { TiptapContent } from '@/types/note'
+import { TableCommands } from './tableExtensions'
 
 // 创建 lowlight 实例并注册常用语言
 const lowlight = createLowlight(common)
-
-/**
- * 在系统浏览器中打开 URL
- * 先尝试 Tauri shell API，失败则使用 window.open
- */
-async function openUrlInBrowser(url: string) {
-  try {
-    // 检测是否在 Tauri 环境中
-    if (typeof window !== 'undefined' && '__TAURI__' in window) {
-      // 动态导入 Tauri opener
-      const opener = await import('@tauri-apps/plugin-opener')
-      await opener.openUrl(url)
-    } else {
-      window.open(url, '_blank', 'noopener,noreferrer')
-    }
-  } catch (error) {
-    console.error('Failed to open URL in external browser:', error)
-    // 回退到 window.open
-    window.open(url, '_blank', 'noopener,noreferrer')
-  }
-}
 
 interface UseTiptapEditorProps {
   content: TiptapContent
@@ -171,13 +151,13 @@ export function useTiptapEditor({
       // 排版增强（智能引号、破折号等）
       Typography,
 
-      // 表格
+      // 表格（使用官方扩展 + 自定义增强命令）
       Table.configure({
         resizable: true,
+        allowTableNodeSelection: true,
         HTMLAttributes: {
           class: 'border-collapse table-auto w-full my-4',
         },
-        allowTableNodeSelection: true,
       }),
       TableRow.configure({
         HTMLAttributes: {
@@ -194,6 +174,9 @@ export function useTiptapEditor({
           class: 'border border-gray-300 px-4 py-2',
         },
       }),
+
+      // 表格增强命令
+      TableCommands,
     ],
 
     content: initialContent,
