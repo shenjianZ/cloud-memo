@@ -4,30 +4,42 @@ use serde::{Serialize, Deserialize};
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct EditorSettings {
-    pub id: i32, // 固定为 1，单例模式
-    pub content_font_family: String,
-    pub content_font_size: i32,
-    pub content_font_weight: i32,
-    pub content_line_height: f64,
-    pub heading_font_family: String,
-    pub heading_font_weight: i32,
-    pub code_font_family: String,
-    pub code_font_size: i32,
-    pub updated_at: i64,
+    pub id: i32,  // 设置 ID（固定为 1，单例模式）
+    // ===== 内容字体设置 =====
+    pub content_font_family: String,  // 正文字体族
+    pub content_font_size: i32,  // 正文字体大小（px）
+    pub content_font_weight: i32,  // 正文字体粗细（100-900）
+    pub content_line_height: f64,  // 正文行高（倍数，如 1.7）
+    // ===== 标题字体设置 =====
+    pub heading_font_family: String,  // 标题字体族
+    pub heading_font_weight: i32,  // 标题字体粗细（100-900）
+    // ===== 代码字体设置 =====
+    pub code_font_family: String,  // 代码字体族
+    pub code_font_size: i32,  // 代码字体大小（px）
+    // ===== 时间戳 =====
+    pub updated_at: i64,  // 更新时间（Unix 时间戳，秒）
 }
 
 /// 更新编辑器设置请求
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateEditorSettingsRequest {
-    pub content_font_family: Option<String>,
-    pub content_font_size: Option<i32>,
-    pub content_font_weight: Option<i32>,
-    pub content_line_height: Option<f64>,
-    pub heading_font_family: Option<String>,
-    pub heading_font_weight: Option<i32>,
-    pub code_font_family: Option<String>,
-    pub code_font_size: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_font_family: Option<String>,  // 新正文字体族
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_font_size: Option<i32>,  // 新正文字体大小
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_font_weight: Option<i32>,  // 新正文字体粗细
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_line_height: Option<f64>,  // 新正文行高
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heading_font_family: Option<String>,  // 新标题字体族
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heading_font_weight: Option<i32>,  // 新标题字体粗细
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code_font_family: Option<String>,  // 新代码字体族
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code_font_size: Option<i32>,  // 新代码字体大小
 }
 
 impl Default for EditorSettings {

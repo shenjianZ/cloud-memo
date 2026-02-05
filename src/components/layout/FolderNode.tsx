@@ -20,6 +20,7 @@ interface FolderNodeProps {
   expandedFolders: Set<string>
   onToggle: (folderId: string) => void
   onClick: (folderId: string) => void
+  searchQuery?: string  // 搜索关键词（小写）
 }
 
 /**
@@ -34,6 +35,7 @@ export function FolderNode({
   expandedFolders,
   onToggle,
   onClick,
+  searchQuery = '',
 }: FolderNodeProps) {
   const { showFolderContextMenu, showNoteContextMenu } = useContextMenuStore()
   const { folders, notes } = useNoteStore()
@@ -47,15 +49,35 @@ export function FolderNode({
   // 获取完整的文件夹数据（包含颜色等属性）
   const folderData = folders.find((f) => f.id === folder.id)
 
-  // 获取该文件夹下的笔记
-  const folderNotes = notes.filter((n) => n.folder === folder.id)
+  // 获取该文件夹下的笔记（支持搜索过滤）
+  const folderNotes = notes.filter((n) => {
+    // 必须在该文件夹下
+    if (n.folder !== folder.id) return false
+
+    // 如果有搜索关键词，检查标题或内容是否匹配
+    if (searchQuery) {
+      const title = n.title?.toLowerCase() || ''
+      const content = typeof n.content === 'string' ? n.content.toLowerCase() : ''
+
+      return title.includes(searchQuery) || content.includes(searchQuery)
+    }
+
+    return true
+  })
 
   const handleClick = () => {
-    onClick(folder.id)
+    // 如果有子文件夹或笔记，优先展开/折叠
+    if (hasChildren || folderNotes.length > 0) {
+      onToggle(folder.id)
+    } else {
+      // 没有子节点时才导航
+      onClick(folder.id)
+    }
   }
 
   const handleToggle = (e: React.MouseEvent) => {
     e.stopPropagation()
+    // 箭头图标始终展开/折叠
     onToggle(folder.id)
   }
 
@@ -121,6 +143,7 @@ export function FolderNode({
                 expandedFolders={expandedFolders}
                 onToggle={onToggle}
                 onClick={onClick}
+                searchQuery={searchQuery}
               />
             ))}
 

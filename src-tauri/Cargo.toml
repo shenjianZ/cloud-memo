@@ -13,21 +13,34 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.4.0", features = [] }
 
 [dependencies]
-tauri = { version = "2.4.0", features = ["devtools"] }
+tauri = { version = "2.4.0", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
+tauri-plugin-log = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 dirs = "5"
 
-# 数据库依赖（启用 bundled 特性以内置 SQLite）
+# 数据库依赖（SQLite）
 r2d2 = "0.8.10"
 r2d2_sqlite = { version = "0.32.0", features = ["bundled"] }
 
 # 工具库
-thiserror = "2.0.18"
-chrono = "0.4.43"
-anyhow = "1.0.100"
-log = "0.4.29"
+thiserror = "2"
+anyhow = "1"
+chrono = "0.4"
+log = "0.4"
+
+# ===== 云端同步相关依赖 =====
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
+aes-gcm = "0.10"
+base64 = "0.21"
+pbkdf2 = "0.12"
+sha2 = "0.10"
+
+[features]
+# 开发模式特性（用于启用 devtools）
+dev = ["tauri/devtools"]
+default = []

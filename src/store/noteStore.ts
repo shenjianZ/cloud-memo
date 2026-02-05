@@ -107,6 +107,8 @@ interface NoteStore {
   createNote: (note: Partial<Note>) => Promise<Note>
   updateNote: (id: string, updates: Partial<Note>) => Promise<void>
   deleteNote: (id: string) => Promise<void>
+  restoreNote: (id: string) => Promise<Note>  // 恢复单个笔记
+  restoreNotes: (ids: string[]) => Promise<Note[]>  // 批量恢复笔记
   duplicateNote: (id: string) => Promise<Note>
   exportNote: (id: string) => Promise<void>
 
@@ -205,6 +207,65 @@ export const useNoteStore = create<NoteStore>()(
         } catch (error) {
           console.error('Failed to delete note:', error)
           set({ isLoading: false })
+          throw error
+        }
+      },
+
+      restoreNote: async (id) => {
+        set({ isLoading: true })
+        try {
+          const apiNote = await noteApi.restoreNote(id)
+          const tagStore = useTagStore.getState()
+          const restoredNote = await apiNoteToNote(apiNote, tagStore)
+
+          set((state) => ({
+            notes: [...state.notes, restoredNote],
+            activeNoteId: restoredNote.id,
+            isLoading: false,
+          }))
+
+          // 只刷新列表，不跳转页面
+          toast.success('笔记已恢复', {
+            description: '已添加到笔记列表',
+          })
+
+          return restoredNote
+        } catch (error) {
+          console.error('Failed to restore note:', error)
+          set({ isLoading: false })
+          toast.error('恢复失败', {
+            description: error instanceof Error ? error.message : '未知错误',
+          })
+          throw error
+        }
+      },
+
+      restoreNotes: async (ids) => {
+        set({ isLoading: true })
+        try {
+          const apiNotes = await noteApi.restoreNotes(ids)
+          const tagStore = useTagStore.getState()
+          const restoredNotes = await Promise.all(
+            apiNotes.map(apiNote => apiNoteToNote(apiNote, tagStore))
+          )
+
+          set((state) => ({
+            notes: [...state.notes, ...restoredNotes],
+            isLoading: false,
+          }))
+
+          // 只刷新列表，不跳转页面
+          toast.success(`已恢复 ${restoredNotes.length} 篇笔记`, {
+            description: '已添加到笔记列表',
+          })
+
+          return restoredNotes
+        } catch (error) {
+          console.error('Failed to restore notes:', error)
+          set({ isLoading: false })
+          toast.error('批量恢复失败', {
+            description: error instanceof Error ? error.message : '未知错误',
+          })
           throw error
         }
       },

@@ -5,5 +5,4 @@ dist/
 src-tauri/gen/android
 src-tauri/gen/ios
 src-tauri/target
-src-tauri/Cargo.lock
 docs/design.md

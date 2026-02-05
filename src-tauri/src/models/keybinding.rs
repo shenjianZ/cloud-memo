@@ -5,29 +5,29 @@ use std::collections::HashMap;
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyCombination {
-    pub ctrl: bool,
-    pub alt: bool,
-    pub shift: bool,
-    pub meta: bool,
-    pub key: String,
+    pub ctrl: bool,  // 是否按下 Ctrl 键
+    pub alt: bool,  // 是否按下 Alt 键
+    pub shift: bool,  // 是否按下 Shift 键
+    pub meta: bool,  // 是否按下 Meta 键（Windows 键或 Command 键）
+    pub key: String,  // 按键代码（如 "KeyA", "Enter", "Space"）
 }
 
 /// 快捷键预设
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct KeybindingPreset {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub keybindings: HashMap<String, KeyCombination>,
+    pub id: String,  // 预设 ID
+    pub name: String,  // 预设名称
+    pub description: String,  // 预设描述
+    pub keybindings: HashMap<String, KeyCombination>,  // 快捷键映射（命令ID -> 快捷键组合）
 }
 
 /// 快捷键数据
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct KeybindingsData {
-    pub keybindings: HashMap<String, KeyCombination>,
-    pub presets: Vec<KeybindingPreset>,
+    pub keybindings: HashMap<String, KeyCombination>,  // 当前快捷键映射
+    pub presets: Vec<KeybindingPreset>,  // 可用的预设列表
 }
 
 /// 获取默认快捷键配置

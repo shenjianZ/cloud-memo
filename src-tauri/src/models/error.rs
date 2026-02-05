@@ -3,31 +3,52 @@ use thiserror::Error;
 /// 应用错误类型
 #[derive(Error, Debug)]
 pub enum AppError {
-    #[error("Database error: {0}")]
-    Database(#[from] r2d2_sqlite::rusqlite::Error),
+    #[error("数据库错误: {0}")]
+    DatabaseError(String),
 
-    #[error("Pool error: {0}")]
+    #[error("连接池错误: {0}")]
     Pool(#[from] r2d2::Error),
 
-    #[error("Note not found: {0}")]
+    #[error("数据库错误: {0}")]
+    Database(#[from] r2d2_sqlite::rusqlite::Error),
+
+    #[error("笔记不存在: {0}")]
     NoteNotFound(String),
 
-    #[error("Folder not found: {0}")]
+    #[error("文件夹不存在: {0}")]
     FolderNotFound(String),
 
-    #[error("Tag not found: {0}")]
+    #[error("标签不存在: {0}")]
     TagNotFound(String),
 
-    #[error("Not found: {0}")]
+    #[error("未找到: {0}")]
     NotFound(String),
 
-    #[error("Invalid operation: {0}")]
+    #[error("未认证: {0}")]
+    NotAuthenticated(String),
+
+    #[error("认证错误: {0}")]
+    AuthenticationError(String),
+
+    #[error("冲突错误: {0}")]
+    ConflictError(String),
+
+    #[error("网络错误: {0}")]
+    NetworkError(String),
+
+    #[error("同步错误: {0}")]
+    SyncError(String),
+
+    #[error("加密错误: {0}")]
+    EncryptionError(String),
+
+    #[error("无效操作: {0}")]
     InvalidOperation(String),
 
-    #[error("Invalid input: {0}")]
+    #[error("无效输入: {0}")]
     InvalidInput(String),
 
-    #[error("Internal error: {0}")]
+    #[error("内部错误: {0}")]
     Internal(String),
 }
 

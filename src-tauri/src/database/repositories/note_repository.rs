@@ -1,6 +1,6 @@
-use crate::models::Note;
 use crate::database::DbPool;
-use crate::models::error::{Result, AppError};
+use crate::models::error::{AppError, Result};
+use crate::models::Note;
 use r2d2_sqlite::rusqlite::params;
 
 /// 笔记数据访问层
@@ -22,9 +22,10 @@ impl NoteRepository {
         let mut stmt = conn.prepare(
             "SELECT id, title, content, excerpt, markdown_cache, folder_id, is_favorite,
                     is_deleted, is_pinned, author, created_at, updated_at, deleted_at,
-                    word_count, read_time_minutes
+                    word_count, read_time_minutes,
+                    server_ver, is_dirty, last_synced_at
              FROM notes
-             WHERE id = ? AND is_deleted = 0"
+             WHERE id = ? AND is_deleted = 0",
         )?;
 
         let note = stmt.query_row(params![id], |row| {
@@ -44,6 +45,9 @@ impl NoteRepository {
                 deleted_at: row.get(12)?,
                 word_count: row.get(13)?,
                 read_time_minutes: row.get(14)?,
+                server_ver: row.get(15)?,
+                is_dirty: row.get(16)?,
+                last_synced_at: row.get(17)?,
             })
         });
 
@@ -60,33 +64,91 @@ impl NoteRepository {
         let mut stmt = conn.prepare(
             "SELECT id, title, content, excerpt, markdown_cache, folder_id, is_favorite,
                     is_deleted, is_pinned, author, created_at, updated_at, deleted_at,
-                    word_count, read_time_minutes
+                    word_count, read_time_minutes,
+                    server_ver, is_dirty, last_synced_at
              FROM notes
              WHERE is_deleted = 0
-             ORDER BY updated_at DESC"
+             ORDER BY updated_at DESC",
         )?;
 
-        let notes = stmt.query_map([], |row| {
-            Ok(Note {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                content: row.get(2)?,
-                excerpt: row.get(3)?,
-                markdown_cache: row.get(4)?,
-                folder_id: row.get(5)?,
-                is_favorite: row.get(6)?,
-                is_deleted: row.get(7)?,
-                is_pinned: row.get(8)?,
-                author: row.get(9)?,
-                created_at: row.get(10)?,
-                updated_at: row.get(11)?,
-                deleted_at: row.get(12)?,
-                word_count: row.get(13)?,
-                read_time_minutes: row.get(14)?,
-            })
-        })?.collect::<std::result::Result<Vec<_>, _>>()
-          .map_err(AppError::Database)?;
+        let notes = stmt
+            .query_map([], |row| {
+                Ok(Note {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    content: row.get(2)?,
+                    excerpt: row.get(3)?,
+                    markdown_cache: row.get(4)?,
+                    folder_id: row.get(5)?,
+                    is_favorite: row.get(6)?,
+                    is_deleted: row.get(7)?,
+                    is_pinned: row.get(8)?,
+                    author: row.get(9)?,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
+                    deleted_at: row.get(12)?,
+                    word_count: row.get(13)?,
+                    read_time_minutes: row.get(14)?,
+                    server_ver: row.get(15)?,
+                    is_dirty: row.get(16)?,
+                    last_synced_at: row.get(17)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(AppError::Database)?;
 
+        Ok(notes)
+    }
+
+    /// 查找所有已删除的笔记（回收站）
+    ///
+    /// ## 查询条件
+    ///
+    /// - 只返回 `is_deleted = 1` 的笔记
+    /// - 按删除时间倒序排列（最新删除的在前）
+    ///
+    /// ## 返回
+    ///
+    /// 返回所有已删除的笔记列表，包含完整的笔记信息
+    pub fn find_deleted(&self) -> Result<Vec<Note>> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, title, content, excerpt, markdown_cache, folder_id, is_favorite,
+                    is_deleted, is_pinned, author, created_at, updated_at, deleted_at,
+                    word_count, read_time_minutes,
+                    server_ver, is_dirty, last_synced_at
+             FROM notes
+             WHERE is_deleted = 1
+             ORDER BY deleted_at DESC",
+        )?;
+
+        let notes = stmt
+            .query_map([], |row| {
+                Ok(Note {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    content: row.get(2)?,
+                    excerpt: row.get(3)?,
+                    markdown_cache: row.get(4)?,
+                    folder_id: row.get(5)?,
+                    is_favorite: row.get(6)?,
+                    is_deleted: row.get(7)?,
+                    is_pinned: row.get(8)?,
+                    author: row.get(9)?,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
+                    deleted_at: row.get(12)?,
+                    word_count: row.get(13)?,
+                    read_time_minutes: row.get(14)?,
+                    server_ver: row.get(15)?,
+                    is_dirty: row.get(16)?,
+                    last_synced_at: row.get(17)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(AppError::Database)?;
+
+        log::debug!("Found {} deleted notes in trash", notes.len());
         Ok(notes)
     }
 
@@ -99,9 +161,19 @@ impl NoteRepository {
                               created_at, updated_at, word_count, read_time_minutes)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
-                note.id, note.title, note.content, note.excerpt, note.folder_id,
-                note.is_favorite as i32, note.is_deleted as i32, note.is_pinned as i32,
-                note.author, note.created_at, note.updated_at, note.word_count, note.read_time_minutes
+                note.id,
+                note.title,
+                note.content,
+                note.excerpt,
+                note.folder_id,
+                note.is_favorite as i32,
+                note.is_deleted as i32,
+                note.is_pinned as i32,
+                note.author,
+                note.created_at,
+                note.updated_at,
+                note.word_count,
+                note.read_time_minutes
             ],
         )?;
 
@@ -119,9 +191,16 @@ impl NoteRepository {
                  updated_at = ?, word_count = ?, read_time_minutes = ?
              WHERE id = ?",
             params![
-                note.title, note.content, note.excerpt, note.folder_id,
-                note.is_favorite as i32, note.is_pinned as i32, note.author,
-                note.updated_at, note.word_count, note.read_time_minutes,
+                note.title,
+                note.content,
+                note.excerpt,
+                note.folder_id,
+                note.is_favorite as i32,
+                note.is_pinned as i32,
+                note.author,
+                note.updated_at,
+                note.word_count,
+                note.read_time_minutes,
                 note.id
             ],
         )?;
@@ -130,6 +209,7 @@ impl NoteRepository {
         Ok(note.clone())
     }
 
+    /// 软删除笔记
     /// 软删除笔记
     pub fn soft_delete(&self, id: &str) -> Result<()> {
         let conn = self.pool.get()?;
@@ -143,6 +223,36 @@ impl NoteRepository {
         Ok(())
     }
 
+    /// 恢复已删除的笔记到"已恢复笔记"文件夹
+    ///
+    /// ## 恢复行为
+    ///
+    /// - 将 `is_deleted` 设为 `false`
+    /// - 将 `deleted_at` 设为 `NULL`
+    /// - 将 `folder_id` 设为"已恢复笔记"文件夹的 ID
+    /// - 更新 `updated_at` 时间戳
+    ///
+    /// ## 参数
+    ///
+    /// - `id`: 笔记 ID
+    /// - `recovered_folder_id`: "已恢复笔记"文件夹的 ID
+    pub fn restore(&self, id: &str, recovered_folder_id: &str) -> Result<()> {
+        let conn = self.pool.get()?;
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "UPDATE notes
+             SET is_deleted = 0,
+                 deleted_at = NULL,
+                 folder_id = ?,
+                 updated_at = ?
+             WHERE id = ?",
+            params![recovered_folder_id, now, id],
+        )?;
+
+        log::debug!("Note restored: {} -> folder: {}", id, recovered_folder_id);
+        Ok(())
+    }
+
     /// 全文搜索笔记
     pub fn search(&self, query: &str) -> Result<Vec<Note>> {
         let conn = self.pool.get()?;
@@ -151,7 +261,8 @@ impl NoteRepository {
         let mut stmt = conn.prepare(
             "SELECT n.id, n.title, n.content, n.excerpt, n.markdown_cache, n.folder_id, n.is_favorite,
                     n.is_deleted, n.is_pinned, n.author, n.created_at, n.updated_at, n.deleted_at,
-                    n.word_count, n.read_time_minutes
+                    n.word_count, n.read_time_minutes,
+                    n.server_ver, n.is_dirty, n.last_synced_at
              FROM notes n
              JOIN notes_fts f ON n.id = f.note_id
              WHERE notes_fts MATCH ? AND n.is_deleted = 0
@@ -159,26 +270,31 @@ impl NoteRepository {
              LIMIT 50"
         )?;
 
-        let notes = stmt.query_map(params![search_query], |row| {
-            Ok(Note {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                content: row.get(2)?,
-                excerpt: row.get(3)?,
-                markdown_cache: row.get(4)?,
-                folder_id: row.get(5)?,
-                is_favorite: row.get(6)?,
-                is_deleted: row.get(7)?,
-                is_pinned: row.get(8)?,
-                author: row.get(9)?,
-                created_at: row.get(10)?,
-                updated_at: row.get(11)?,
-                deleted_at: row.get(12)?,
-                word_count: row.get(13)?,
-                read_time_minutes: row.get(14)?,
-            })
-        })?.collect::<std::result::Result<Vec<_>, _>>()
-          .map_err(AppError::Database)?;
+        let notes = stmt
+            .query_map(params![search_query], |row| {
+                Ok(Note {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    content: row.get(2)?,
+                    excerpt: row.get(3)?,
+                    markdown_cache: row.get(4)?,
+                    folder_id: row.get(5)?,
+                    is_favorite: row.get(6)?,
+                    is_deleted: row.get(7)?,
+                    is_pinned: row.get(8)?,
+                    author: row.get(9)?,
+                    created_at: row.get(10)?,
+                    updated_at: row.get(11)?,
+                    deleted_at: row.get(12)?,
+                    word_count: row.get(13)?,
+                    read_time_minutes: row.get(14)?,
+                    server_ver: row.get(15)?,
+                    is_dirty: row.get(16)?,
+                    last_synced_at: row.get(17)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(AppError::Database)?;
 
         log::debug!("Search completed: {} results", notes.len());
         Ok(notes)

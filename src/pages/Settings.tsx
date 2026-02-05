@@ -1,245 +1,132 @@
-import { useState } from 'react'
-import { ModeToggle } from '@/components/mode-toggle'
-import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
-import { Switch } from '@/components/ui/switch'
-import { Label } from '@/components/ui/label'
-import { Slider } from '@/components/ui/slider'
-import { useNoteStore } from '@/store/noteStore'
-import { toast } from 'sonner'
-import { Download, Trash2, Keyboard, Database, Info, Type, Tag as TagIcon } from 'lucide-react'
+import { Settings as SettingsIcon } from 'lucide-react'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { AppearanceSettings } from '@/components/settings/AppearanceSettings'
+import { EditorSettings } from '@/components/settings/EditorSettings'
+import { DataSettings } from '@/components/settings/DataSettings'
+import { KeybindingsSettings } from '@/components/settings/KeybindingsSettings'
+import { AboutSettings } from '@/components/settings/AboutSettings'
 import { FontSettings } from '@/components/FontSettings'
 import { TagManager } from '@/components/tags/TagManager'
+import { AccountSyncSettings } from '@/components/sync/AccountSyncSettings'
+import { AppSettings } from '@/components/settings/AppSettings'
 
 export default function Settings() {
-  const { notes, exportAllNotes, clearAllNotes } = useNoteStore()
-  const [fontSize, setFontSize] = useState(16)
-  const [autoSaveInterval, setAutoSaveInterval] = useState(1000)
-  const [showLineNumbers, setShowLineNumbers] = useState(false)
-  const [spellCheck, setSpellCheck] = useState(true)
-
-  // 导出所有笔记
-  const handleExportAll = async () => {
-    try {
-      await exportAllNotes()
-      toast.success('所有笔记已导出')
-    } catch (error) {
-      toast.error('导出失败')
-      console.error(error)
-    }
-  }
-
-  // 清除所有数据
-  const handleClearAll = async () => {
-    try {
-      await clearAllNotes()
-      toast.success('所有数据已清除')
-    } catch (error) {
-      toast.error('清除失败')
-      console.error(error)
-    }
-  }
-
   return (
-    <div className="space-y-6 max-w-4xl">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">设置</h1>
-        <p className="text-muted-foreground">管理应用偏好设置</p>
+    <div className="p-4 sm:p-6 max-w-4xl mx-auto">
+      {/* 页面标题 */}
+      <div className="mb-4 sm:mb-6">
+        <div className="flex items-center gap-3">
+          <SettingsIcon className="h-6 w-6 sm:h-8 sm:w-8" />
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold">设置</h1>
+            <p className="text-sm sm:text-base text-muted-foreground mt-1">
+              配置应用偏好和编辑器选项
+            </p>
+          </div>
+        </div>
       </div>
 
-      <div className="space-y-4">
+      {/* 设置选项卡 */}
+      <Tabs defaultValue="appearance" className="space-y-4 sm:space-y-6">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 gap-1 h-auto">
+          <TabsTrigger value="appearance" className="gap-2">
+            <SettingsIcon className="h-4 w-4" />
+            外观
+          </TabsTrigger>
+          <TabsTrigger value="editor" className="gap-2">
+            <SettingsIcon className="h-4 w-4" />
+            编辑器
+          </TabsTrigger>
+          <TabsTrigger value="fonts" className="gap-2">
+            <SettingsIcon className="h-4 w-4" />
+            字体
+          </TabsTrigger>
+          <TabsTrigger value="sync" className="gap-2">
+            <SettingsIcon className="h-4 w-4" />
+            同步
+          </TabsTrigger>
+          <TabsTrigger value="tags" className="gap-2">
+            <SettingsIcon className="h-4 w-4" />
+            标签
+          </TabsTrigger>
+          <TabsTrigger value="data" className="gap-2">
+            <SettingsIcon className="h-4 w-4" />
+            数据
+          </TabsTrigger>
+          <TabsTrigger value="keybindings" className="gap-2">
+            <SettingsIcon className="h-4 w-4" />
+            快捷键
+          </TabsTrigger>
+          <TabsTrigger value="about" className="gap-2">
+            <SettingsIcon className="h-4 w-4" />
+            关于
+          </TabsTrigger>
+        </TabsList>
+
         {/* 外观设置 */}
-        <div className="rounded-lg border p-4">
-          <div className="flex items-center gap-2 mb-4">
-            <Info className="w-4 h-4" />
-            <h3 className="font-semibold">外观</h3>
-          </div>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium">主题</p>
-                <p className="text-sm text-muted-foreground">切换浅色/深色主题</p>
-              </div>
-              <ModeToggle />
-            </div>
-
-            <Separator />
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="font-size">编辑器字体大小</Label>
-                <span className="text-sm text-muted-foreground">{fontSize}px</span>
-              </div>
-              <Slider
-                id="font-size"
-                min={12}
-                max={24}
-                step={1}
-                value={[fontSize]}
-                onValueChange={(value) => setFontSize(value[0])}
-                className="w-full"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* 字体设置 */}
-        <div className="rounded-lg border p-4">
-          <div className="flex items-center gap-2 mb-4">
-            <Type className="w-4 h-4" />
-            <h3 className="font-semibold">字体设置</h3>
-          </div>
-          <FontSettings />
-        </div>
+        <TabsContent value="appearance" className="space-y-6">
+          <AppearanceSettings />
+        </TabsContent>
 
         {/* 编辑器设置 */}
-        <div className="rounded-lg border p-4">
-          <div className="flex items-center gap-2 mb-4">
-            <Keyboard className="w-4 h-4" />
-            <h3 className="font-semibold">编辑器</h3>
+        <TabsContent value="editor" className="space-y-6">
+          <EditorSettings />
+        </TabsContent>
+
+        {/* 字体设置 */}
+        <TabsContent value="fonts" className="space-y-6">
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-semibold">字体设置</h2>
+            </div>
+            <FontSettings />
           </div>
-          <div className="space-y-4">
+        </TabsContent>
+
+        {/* 同步设置 */}
+        <TabsContent value="sync" className="space-y-6">
+          <div className="space-y-6">
             <div className="flex items-center justify-between">
-              <div className="space-y-0.5">
-                <Label htmlFor="line-numbers">显示行号</Label>
-                <p className="text-sm text-muted-foreground">在代码块中显示行号</p>
-              </div>
-              <Switch
-                id="line-numbers"
-                checked={showLineNumbers}
-                onCheckedChange={setShowLineNumbers}
-              />
+              <h2 className="text-xl font-semibold">账户与同步</h2>
             </div>
+            <AccountSyncSettings />
 
-            <Separator />
-
-            <div className="flex items-center justify-between">
-              <div className="space-y-0.5">
-                <Label htmlFor="spell-check">拼写检查</Label>
-                <p className="text-sm text-muted-foreground">启用浏览器拼写检查</p>
+            <div className="pt-6 border-t">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold">应用设置</h2>
               </div>
-              <Switch
-                id="spell-check"
-                checked={spellCheck}
-                onCheckedChange={setSpellCheck}
-              />
-            </div>
-
-            <Separator />
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="auto-save">自动保存间隔</Label>
-                <span className="text-sm text-muted-foreground">{autoSaveInterval / 1000}s</span>
-              </div>
-              <Slider
-                id="auto-save"
-                min={500}
-                max={5000}
-                step={500}
-                value={[autoSaveInterval]}
-                onValueChange={(value) => setAutoSaveInterval(value[0])}
-                className="w-full"
-              />
+              <AppSettings />
             </div>
           </div>
-        </div>
+        </TabsContent>
 
         {/* 标签管理 */}
-        <div className="rounded-lg border p-4">
-          <div className="flex items-center gap-2 mb-4">
-            <TagIcon className="w-4 h-4" />
-            <h3 className="font-semibold">标签管理</h3>
+        <TabsContent value="tags" className="space-y-6">
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-semibold">标签管理</h2>
+            </div>
+            <div className="rounded-lg border p-4">
+              <TagManager />
+            </div>
           </div>
-          <TagManager />
-        </div>
+        </TabsContent>
 
         {/* 数据管理 */}
-        <div className="rounded-lg border p-4">
-          <div className="flex items-center gap-2 mb-4">
-            <Database className="w-4 h-4" />
-            <h3 className="font-semibold">数据管理</h3>
-          </div>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium">导出所有笔记</p>
-                <p className="text-sm text-muted-foreground">
-                  当前共有 {notes.length} 篇笔记
-                </p>
-              </div>
-              <Button variant="outline" size="sm" onClick={handleExportAll}>
-                <Download className="w-4 h-4 mr-2" />
-                导出
-              </Button>
-            </div>
+        <TabsContent value="data" className="space-y-6">
+          <DataSettings />
+        </TabsContent>
 
-            <Separator />
-
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => {
-                const confirmed = window.confirm('确定要清除所有数据吗？此操作将删除所有笔记且无法撤销。请确保已导出重要数据。')
-                if (confirmed) {
-                  handleClearAll()
-                }
-              }}
-            >
-              <Trash2 className="w-4 h-4 mr-2" />
-              清除所有数据
-            </Button>
-          </div>
-        </div>
-
-        {/* 快捷键 */}
-        <div className="rounded-lg border p-4">
-          <div className="flex items-center gap-2 mb-4">
-            <Keyboard className="w-4 h-4" />
-            <h3 className="font-semibold">快捷键</h3>
-          </div>
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">新建笔记</span>
-              <kbd className="px-2 py-1 bg-muted rounded text-xs">Ctrl + N</kbd>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">保存</span>
-              <kbd className="px-2 py-1 bg-muted rounded text-xs">Ctrl + S</kbd>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">查找</span>
-              <kbd className="px-2 py-1 bg-muted rounded text-xs">Ctrl + F</kbd>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">斜杠命令</span>
-              <kbd className="px-2 py-1 bg-muted rounded text-xs">/</kbd>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">粗体</span>
-              <kbd className="px-2 py-1 bg-muted rounded text-xs">Ctrl + B</kbd>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">斜体</span>
-              <kbd className="px-2 py-1 bg-muted rounded text-xs">Ctrl + I</kbd>
-            </div>
-          </div>
-        </div>
+        {/* 快捷键设置 */}
+        <TabsContent value="keybindings" className="space-y-6">
+          <KeybindingsSettings />
+        </TabsContent>
 
         {/* 关于 */}
-        <div className="rounded-lg border p-4">
-          <div className="flex items-center gap-2 mb-4">
-            <Info className="w-4 h-4" />
-            <h3 className="font-semibold">关于</h3>
-          </div>
-          <div className="space-y-2 text-sm">
-            <p><strong>版本:</strong> 0.1.0</p>
-            <p><strong>技术栈:</strong> React + TypeScript + Tauri 2 + Tiptap</p>
-            <p><strong>数据库:</strong> SQLite</p>
-            <p><strong>开源协议:</strong> MIT</p>
-          </div>
-        </div>
-      </div>
+        <TabsContent value="about" className="space-y-6">
+          <AboutSettings />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

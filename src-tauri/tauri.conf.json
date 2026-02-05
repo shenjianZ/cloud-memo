@@ -6,7 +6,7 @@
     "build": {
         "beforeDevCommand": "pnpm dev",
         "devUrl": "http://localhost:1420",
-        "beforeBuildCommand": "pnpm build",
+        "beforeBuildCommand": "pnpm prebuild",
         "frontendDist": "../dist"
     },
     "app": {
@@ -21,6 +21,25 @@
                 "transparent": true,
                 "decorations": false,
                 "shadow": true,
+                "devtools": true
+            },
+            {
+                "label": "auth",
+                "title": "登录 - Markdown Notes",
+                "url": "index.html#/auth",
+                "width": 400,
+                "height": 520,
+                "minWidth": 400,
+                "minHeight": 520,
+                "maxWidth": 400,
+                "maxHeight": 520,
+                "resizable": false,
+                "center": true,
+                "decorations": false,
+                "shadow": true,
+                "alwaysOnTop": true,
+                "skipTaskbar": true,
+                "visible": false,
                 "devtools": true
             }
         ],

@@ -1,48 +1,25 @@
 use crate::database::repositories::NoteRepository;
-use crate::models::{Note, CreateNoteRequest, UpdateNoteRequest, MoveNotesRequest};
+use crate::database::repositories::FolderRepository;
+use crate::models::{Note, Folder, CreateNoteRequest, UpdateNoteRequest, MoveNotesRequest};
 use crate::models::error::{Result, AppError};
-use uuid::Uuid;
 
 /// 笔记业务逻辑层
 ///
 /// 处理笔记相关的业务逻辑，调用 Repository 进行数据操作
 pub struct NoteService {
     repo: NoteRepository,
+    folder_repo: FolderRepository,  // 用于恢复笔记时创建/获取"已恢复笔记"文件夹
 }
 
 impl NoteService {
     /// 创建新的 NoteService 实例
-    pub fn new(repo: NoteRepository) -> Self {
-        Self { repo }
+    pub fn new(repo: NoteRepository, folder_repo: FolderRepository) -> Self {
+        Self { repo, folder_repo }
     }
 
     /// 创建笔记
     pub fn create_note(&self, req: CreateNoteRequest) -> Result<Note> {
-        let id = Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().timestamp();
-
-        let excerpt = self.generate_excerpt(&req.content);
-        let word_count = self.count_words(&req.content);
-        let read_time_minutes = self.calculate_read_time(word_count);
-
-        let note = Note {
-            id,
-            title: req.title,
-            content: req.content,
-            excerpt,
-            markdown_cache: None,
-            folder_id: req.folder_id,
-            is_favorite: false,
-            is_deleted: false,
-            is_pinned: false,
-            author: None,
-            created_at: now,
-            updated_at: now,
-            deleted_at: None,
-            word_count,
-            read_time_minutes,
-        };
-
+        let note = Note::new(req.title, req.content, req.folder_id);
         self.repo.create(&note)
     }
 
@@ -60,10 +37,7 @@ impl NoteService {
             note.title = title;
         }
         if let Some(content) = req.content {
-            note.content = content;
-            note.excerpt = self.generate_excerpt(&note.content);
-            note.word_count = self.count_words(&note.content);
-            note.read_time_minutes = self.calculate_read_time(note.word_count);
+            note.update_content(content);
         }
         if let Some(folder_id) = req.folder_id {
             note.folder_id = Some(folder_id);
@@ -79,6 +53,8 @@ impl NoteService {
         }
 
         note.updated_at = chrono::Utc::now().timestamp();
+        // 云端同步：修改笔记时标记为需要同步
+        note.is_dirty = true;
 
         self.repo.update(&note)
     }
@@ -88,9 +64,120 @@ impl NoteService {
         self.repo.soft_delete(id)
     }
 
+    /// 恢复已删除的笔记到"已恢复笔记"文件夹
+    ///
+    /// ## 恢复行为
+    ///
+    /// - 自动获取或创建"已恢复笔记"系统文件夹
+    /// - 将笔记从回收站恢复到该文件夹
+    /// - 笔记状态：`is_deleted = false`
+    /// - 文件夹位置：`folder_id = "已恢复笔记"文件夹 ID`
+    ///
+    /// ## 示例
+    ///
+    /// ```text
+    /// 回收站：                    恢复后：
+    /// 📄 项目笔记（已删除）      →  📁 已恢复笔记
+    ///                              └─ 📄 项目笔记
+    /// ```
+    ///
+    /// ## 注意事项
+    ///
+    /// - ✅ "已恢复笔记"文件夹会自动创建（如果不存在）
+    /// - ✅ 用户可以手动整理恢复的笔记到其他文件夹
+    /// - ⚠️ 笔记不会恢复到原始位置（使用方案 A 才能支持）
+    pub fn restore_note(&self, id: &str) -> Result<Note> {
+        // 获取或创建"已恢复笔记"文件夹
+        let recovered_folder = self.get_or_create_recovered_folder()?;
+
+        // 恢复笔记到该文件夹
+        self.repo.restore(id, &recovered_folder.id)?;
+
+        // 返回恢复后的笔记
+        self.repo.find_by_id(id)?.ok_or(AppError::NotFound(format!("Note {} not found after restore", id)))
+    }
+
+    /// 获取或创建"已恢复笔记"系统文件夹
+    ///
+    /// ## 文件夹属性
+    ///
+    /// - **名称**：`已恢复笔记`
+    /// - **父级**：根目录（`parent_id = NULL`）
+    /// - **图标**：📋 或 ♻️（前端可配置）
+    /// - **颜色**：绿色（表示恢复）
+    /// - **排序**：`sort_order = 9999`（永远在根目录最下边）
+    ///
+    /// ## 行为
+    ///
+    /// - 如果文件夹已存在，直接返回
+    /// - 如果不存在，自动创建（sort_order = 9999）
+    fn get_or_create_recovered_folder(&self) -> Result<Folder> {
+        const RECOVERED_FOLDER_NAME: &str = "已恢复笔记";
+        const RECOVERED_FOLDER_SORT_ORDER: i32 = 9999;  // 永远在最下边
+
+        // 尝试查找已存在的"已恢复笔记"文件夹
+        let all_folders = self.folder_repo.find_all()?;
+        if let Some(existing) = all_folders.iter().find(|f| f.name == RECOVERED_FOLDER_NAME && !f.is_deleted) {
+            // 如果已存在但 sort_order 不正确，更新它
+            if existing.sort_order != RECOVERED_FOLDER_SORT_ORDER {
+                let mut updated = existing.clone();
+                updated.sort_order = RECOVERED_FOLDER_SORT_ORDER;
+                updated.updated_at = chrono::Utc::now().timestamp();
+                return self.folder_repo.update(&updated);
+            }
+            return Ok(existing.clone());
+        }
+
+        // 不存在则创建
+        let mut folder = Folder::new(
+            RECOVERED_FOLDER_NAME.to_string(),
+            None,  // 根目录
+            Some("#4CAF50".to_string()),  // 绿色
+            Some("recycle".to_string()),  // 图标
+        );
+        folder.sort_order = RECOVERED_FOLDER_SORT_ORDER;  // 设置为最下边
+        self.folder_repo.create(&folder)?;
+
+        Ok(folder)
+    }
+
+    /// 批量恢复笔记到"已恢复笔记"文件夹
+    ///
+    /// ## 参数
+    ///
+    /// - `note_ids`: 要恢复的笔记 ID 列表
+    ///
+    /// ## 返回
+    ///
+    /// 返回成功恢复的笔记列表
+    pub fn restore_notes(&self, note_ids: Vec<String>) -> Result<Vec<Note>> {
+        let mut restored_notes = Vec::new();
+
+        for note_id in note_ids {
+            match self.restore_note(&note_id) {
+                Ok(note) => restored_notes.push(note),
+                Err(e) => {
+                    log::warn!("Failed to restore note {}: {}", note_id, e);
+                    // 继续恢复其他笔记，不中断整个操作
+                }
+            }
+        }
+
+        Ok(restored_notes)
+    }
+
     /// 获取所有笔记
     pub fn list_all_notes(&self) -> Result<Vec<Note>> {
         self.repo.find_all()
+    }
+
+    /// 获取所有已删除的笔记（回收站）
+    ///
+    /// ## 返回
+    ///
+    /// 返回所有已删除的笔记列表，按删除时间倒序排列
+    pub fn list_deleted_notes(&self) -> Result<Vec<Note>> {
+        self.repo.find_deleted()
     }
 
     /// 搜索笔记
@@ -121,27 +208,5 @@ impl NoteService {
         }
 
         Ok(moved_notes)
-    }
-
-    // ===== 工具方法 =====
-
-    /// 生成摘要
-    fn generate_excerpt(&self, content: &str) -> Option<String> {
-        let chars: Vec<char> = content.chars().collect();
-        if chars.len() <= 200 {
-            None
-        } else {
-            Some(chars[..200].iter().collect())
-        }
-    }
-
-    /// 统计字数
-    fn count_words(&self, content: &str) -> u32 {
-        content.split_whitespace().count() as u32
-    }
-
-    /// 计算阅读时间（假设 200 字/分钟）
-    fn calculate_read_time(&self, word_count: u32) -> u32 {
-        (word_count / 200).max(1)
     }
 }

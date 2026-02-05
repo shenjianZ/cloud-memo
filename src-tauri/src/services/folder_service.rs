@@ -1,7 +1,6 @@
 use crate::database::repositories::FolderRepository;
 use crate::models::{Folder, CreateFolderRequest, UpdateFolderRequest, MoveFolderRequest};
 use crate::models::error::{Result, AppError};
-use uuid::Uuid;
 
 /// 文件夹业务逻辑层
 ///
@@ -18,24 +17,14 @@ impl FolderService {
 
     /// 创建文件夹
     pub fn create_folder(&self, req: CreateFolderRequest) -> Result<Folder> {
-        let id = Uuid::new_v4().to_string();
-        let now = chrono::Utc::now().timestamp();
-
         // 获取最大排序值
         let sort_order = self.repo.get_max_sort_order(req.parent_id.as_deref())? + 1;
 
-        let folder = Folder {
-            id,
-            name: req.name,
-            parent_id: req.parent_id,
-            icon: req.icon,
-            color: req.color,
-            sort_order,
-            is_deleted: false,
-            created_at: now,
-            updated_at: now,
-            deleted_at: None,
-        };
+        // 使用构造函数创建文件夹
+        let mut folder = Folder::new(req.name, req.parent_id, req.color, req.icon);
+
+        // 设置计算得到的 sort_order
+        folder.sort_order = sort_order;
 
         self.repo.create(&folder)
     }
@@ -79,20 +68,56 @@ impl FolderService {
         }
 
         folder.updated_at = chrono::Utc::now().timestamp();
+        // 云端同步：修改文件夹时标记为需要同步
+        folder.is_dirty = true;
 
         self.repo.update(&folder)
     }
 
-    /// 删除文件夹（软删除）
+    /// 删除文件夹（物理删除，级联删除子文件夹）
+    ///
+    /// ## 删除行为
+    ///
+    /// ### 对文件夹的影响
+    /// - 删除目标文件夹本身
+    /// - **级联删除所有子文件夹**（数据库外键自动处理）
+    /// - 整棵子树全部删除
+    ///
+    /// ### 对笔记的影响
+    /// - **笔记不会被删除**（用户内容保护）
+    /// - 所有笔记的 `folder_id` 被设为 `NULL`
+    /// - 笔记变成"未分类"状态，仍在应用中
+    ///
+    /// ## 示例场景
+    ///
+    /// ```text
+    /// 删除"工作"文件夹：
+    ///
+    /// 删除前：                           删除后：
+    /// 📁 工作                            （文件夹树中消失）
+    ///   ├─ 📄 项目A笔记                  📄 项目A笔记（未分类）
+    ///   ├─ 📄 项目B笔记                  📄 项目B笔记（未分类）
+    ///   └─ 📁 2024                       （被级联删除）
+    ///       └─ 📄 年度计划                📄 年度计划（未分类）
+    /// ```
+    ///
+    /// ## 设计理念
+    ///
+    /// - ✅ **文件夹 = 组织结构**：可删除，支持动态调整
+    /// - ✅ **笔记 = 用户内容**：永不因文件夹删除而丢失
+    /// - ✅ **回收站**：笔记有独立的软删除机制
+    ///
+    /// ## 注意事项
+    ///
+    /// - ⚠️ **不可恢复**：文件夹和子文件夹删除后无法恢复
+    /// - ✅ **笔记安全**：笔记仍然存在，只是不再属于任何文件夹
+    /// - 💡 **建议**：删除前应提示用户"此操作将删除文件夹及子文件夹，笔记会保留在未分类"
     pub fn delete_folder(&self, id: &str) -> Result<()> {
         // 验证文件夹存在
         self.get_folder(id)?;
 
-        // TODO: 这里可以选择：
-        // 1. 级联删除子文件夹和笔记
-        // 2. 仅删除文件夹，子文件夹和笔记保留
-        // 当前实现：仅软删除文件夹本身
-        self.repo.soft_delete(id)
+        // 物理删除：数据库外键自动级联删除子文件夹，笔记 folder_id 设为 NULL
+        self.repo.hard_delete(id)
     }
 
     /// 获取所有文件夹

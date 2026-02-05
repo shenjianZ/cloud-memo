@@ -22,6 +22,10 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             deleted_at INTEGER,
             word_count INTEGER DEFAULT 0,
             read_time_minutes INTEGER DEFAULT 0,
+            -- 云端同步字段（最小侵入：仅 3 个字段）
+            server_ver INTEGER DEFAULT 0,
+            is_dirty BOOLEAN DEFAULT 0,
+            last_synced_at INTEGER,
             FOREIGN KEY (folder_id) REFERENCES folders(id) ON DELETE SET NULL
         );
 
@@ -36,6 +40,10 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
             deleted_at INTEGER,
+            -- 云端同步字段
+            server_ver INTEGER DEFAULT 0,
+            is_dirty BOOLEAN DEFAULT 0,
+            last_synced_at INTEGER,
             FOREIGN KEY (parent_id) REFERENCES folders(id) ON DELETE CASCADE
         );
 
@@ -97,6 +105,84 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             code_font_size INTEGER NOT NULL DEFAULT 14,
             updated_at INTEGER NOT NULL
         );
+
+        -- 手动版本快照表（不同步到云端）
+        CREATE TABLE IF NOT EXISTS note_snapshots (
+            id TEXT PRIMARY KEY,
+            note_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            snapshot_name TEXT,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+        );
+
+        -- 用户认证表（加密存储，支持多账号）
+        CREATE TABLE IF NOT EXISTS user_auth (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL UNIQUE,
+            server_url TEXT NOT NULL,
+            email TEXT NOT NULL,
+            access_token_encrypted TEXT NOT NULL,
+            refresh_token_encrypted TEXT,
+            token_expires_at INTEGER,
+            device_id TEXT NOT NULL,
+            last_sync_at INTEGER,
+            is_current BOOLEAN DEFAULT 0,  -- 是否为当前激活的账号
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+
+        -- 创建索引：快速查询当前账号
+        CREATE INDEX IF NOT EXISTS idx_user_auth_current ON user_auth(is_current);
+
+        -- 用户资料表（本地数据，不同步到服务器）
+        -- 用于存储用户的补充信息（昵称、手机号等）
+        CREATE TABLE IF NOT EXISTS user_profiles (
+            id INTEGER PRIMARY KEY,
+            user_id TEXT NOT NULL UNIQUE,
+            username TEXT,
+            phone TEXT,
+            qq TEXT,
+            wechat TEXT,
+            avatar_data TEXT,  -- 头像图片数据（Base64 编码）
+            avatar_mime_type TEXT,  -- 头像图片类型（image/jpeg, image/png, image/gif）
+            bio TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+
+        -- 同步状态表
+        CREATE TABLE IF NOT EXISTS sync_state (
+            id INTEGER PRIMARY KEY,
+            last_sync_at INTEGER,
+            pending_count INTEGER DEFAULT 0,
+            conflict_count INTEGER DEFAULT 0,
+            last_error TEXT
+        );
+
+        -- 应用配置表（设备级配置，所有用户共享）
+        CREATE TABLE IF NOT EXISTS app_config (
+            id INTEGER PRIMARY KEY,
+            device_id TEXT NOT NULL UNIQUE,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+
+        -- 应用设置表（全局配置）
+        CREATE TABLE IF NOT EXISTS app_settings (
+            id INTEGER PRIMARY KEY,
+            default_server_url TEXT NOT NULL DEFAULT 'https://api.noteapp.com',
+            auto_sync_enabled BOOLEAN DEFAULT 1,
+            sync_interval_minutes INTEGER DEFAULT 5,
+            theme TEXT DEFAULT 'system',
+            language TEXT DEFAULT 'zh-CN',
+            updated_at INTEGER NOT NULL
+        );
+
+        -- 初始化默认配置
+        INSERT OR IGNORE INTO app_settings (id, default_server_url, auto_sync_enabled, sync_interval_minutes, theme, language, updated_at)
+        VALUES (1, 'https://api.noteapp.com', 1, 5, 'system', 'zh-CN', 1710000000);
     "
     )?;
 

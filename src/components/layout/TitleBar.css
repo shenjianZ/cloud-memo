@@ -42,6 +42,17 @@
   text-overflow: ellipsis;
 }
 
+/* 用户区域 - 中间/右侧 */
+.titlebar-user-area {
+  position: absolute;
+  right: 138px; /* 紧挨着窗口控制按钮（3个按钮 * 46px = 138px） */
+  top: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  -webkit-app-region: no-drag;
+}
+
 /* 窗口控制按钮区域 - 右侧 */
 .window-controls {
   display: flex;

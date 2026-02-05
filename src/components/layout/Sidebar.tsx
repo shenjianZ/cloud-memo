@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { Search, Settings, ChevronDown, ChevronRight, Plus, Star, FolderPlus, Home } from 'lucide-react'
+import { Search, Settings, ChevronDown, ChevronRight, Plus, Star, FolderPlus, Home, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useNoteStore } from '@/store/noteStore'
@@ -45,6 +45,7 @@ export function Sidebar() {
   const folderFilter = searchParams.get('folder')
   const isHomePage = currentPath === '/'
   const isFavoritesPage = currentPath === '/favorites'
+  const isTrashPage = currentPath === '/trash'
 
   // 加载笔记数据
   useEffect(() => {
@@ -78,15 +79,17 @@ export function Sidebar() {
     }
   }, [])
 
-  // 构建文件夹树结构
+  // 构建文件夹树结构（支持搜索过滤）
   const buildTree = (): FolderTree[] => {
     const map = new Map<string, FolderTree>()
     const roots: FolderTree[] = []
 
+    // 第一步：创建所有文件夹节点
     folders.forEach(folder => {
       map.set(folder.id, { id: folder.id, name: folder.name, parentId: folder.parentId, children: [] })
     })
 
+    // 第二步：构建父子关系
     folders.forEach(folder => {
       const node = map.get(folder.id)!
       if (folder.parentId) {
@@ -98,6 +101,39 @@ export function Sidebar() {
         roots.push(node)
       }
     })
+
+    // 第三步：如果有搜索关键词，过滤文件夹树
+    if (searchQuery) {
+      // 找出所有匹配的笔记所在的文件夹 ID
+      const matchedFolderIds = new Set<string>()
+      notes.forEach(note => {
+        const title = getNoteTitle(note).toLowerCase()
+        const content = typeof note.content === 'string' ? note.content.toLowerCase() : ''
+
+        if (title.includes(searchQuery) || content.includes(searchQuery)) {
+          if (note.folder) {
+            matchedFolderIds.add(note.folder)
+          }
+        }
+      })
+
+      // 递归过滤文件夹树：只保留包含匹配笔记的文件夹及其祖先
+      const filterTree = (nodes: FolderTree[]): FolderTree[] => {
+        return nodes.filter(node => {
+          // 检查该文件夹是否包含匹配的笔记
+          const hasMatchedNotes = matchedFolderIds.has(node.id)
+
+          // 递归检查子文件夹
+          const filteredChildren = filterTree(node.children || [])
+          node.children = filteredChildren
+
+          // 保留条件：自己有匹配的笔记 或 子文件夹有匹配的笔记
+          return hasMatchedNotes || filteredChildren.length > 0
+        })
+      }
+
+      return filterTree(roots)
+    }
 
     return roots
   }
@@ -130,36 +166,20 @@ export function Sidebar() {
         onClick={(folderId) => {
           navigate(`/?folder=${folderId}`)
         }}
+        searchQuery={searchQueryLower}
       />
     )
   }
 
   const tree = buildTree()
 
-  // 过滤笔记
-  const filteredNotes = (() => {
-    let result = notes
-
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase()
-      result = result.filter(note => {
-        const title = getNoteTitle(note).toLowerCase()
-        return title.includes(query) ||
-          (typeof note.content === 'string' && note.content.toLowerCase().includes(query))
-      })
-    }
-
-    if (folderFilter) {
-      result = result.filter(n => n.folder === folderFilter)
-    }
-
-    return result
-  })()
-
-  // 按更新时间排序
-  const sortedNotes = [...filteredNotes].sort(
+  // 按更新时间排序（基于所有笔记）
+  const sortedNotes = [...notes].sort(
     (a, b) => b.updatedAt - a.updatedAt
   )
+
+  // 获取搜索关键词（用于传递给 FolderNode）
+  const searchQueryLower = searchQuery.toLowerCase()
 
   // 创建新文件夹
   const handleCreateFolder = useCallback(async () => {
@@ -290,6 +310,16 @@ export function Sidebar() {
                   {notes.filter(n => n.isFavorite).length}
                 </span>
               </div>
+              <div
+                className={cn(
+                  "flex items-center gap-2 px-3 py-2 hover:bg-muted/50 cursor-pointer rounded-lg transition-colors text-sm",
+                  isTrashPage && "bg-accent text-accent-foreground"
+                )}
+                onClick={() => navigate('/trash')}
+              >
+                <Trash2 className="w-4 h-4 text-red-500" />
+                <span className="font-medium">回收站</span>
+              </div>
             </div>
 
             {/* 笔记列表（包含文件夹和笔记） */}
@@ -347,9 +377,20 @@ export function Sidebar() {
                 const rootNotes = sortedNotes.filter(n => !n.folder)
                 if (rootNotes.length === 0) return null
 
+                // 应用搜索过滤
+                const filteredRootNotes = searchQuery
+                  ? rootNotes.filter(note => {
+                      const title = getNoteTitle(note).toLowerCase()
+                      const content = typeof note.content === 'string' ? note.content.toLowerCase() : ''
+                      return title.includes(searchQuery) || content.includes(searchQuery)
+                    })
+                  : rootNotes
+
+                if (filteredRootNotes.length === 0) return null
+
                 return (
                   <div className="mt-2 space-y-1">
-                    {rootNotes.map((note) => (
+                    {filteredRootNotes.map((note) => (
                       <NoteItem
                         key={note.id}
                         note={note}

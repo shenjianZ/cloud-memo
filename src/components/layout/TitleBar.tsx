@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Minus, Square, X, Copy } from 'lucide-react';
+import { UserArea } from '@/components/user/UserArea';
 import './TitleBar.css';
 
 // Windows 风格的还原图标（两个重叠的矩形）
@@ -81,6 +82,11 @@ export function TitleBar() {
       <div data-tauri-drag-region className="titlebar-drag-area">
         <Copy className="titlebar-icon" size={16} />
         <span className="titlebar-title">Markdown Notes</span>
+      </div>
+
+      {/* 用户区域 - 右侧，靠近窗口控制按钮 */}
+      <div className="titlebar-user-area">
+        <UserArea />
       </div>
 
       {/* 窗口控制按钮 - 右侧 */}

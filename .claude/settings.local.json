@@ -3,7 +3,11 @@
     "allow": [
       "Bash(cat:*)",
       "WebSearch",
-      "Bash(pnpm build:*)"
+      "Bash(pnpm build:*)",
+      "Bash(cargo check:*)",
+      "Bash(timeout:*)",
+      "Bash(find:*)",
+      "Bash(ls:*)"
     ]
   }
 }
