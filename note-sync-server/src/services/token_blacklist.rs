@@ -28,7 +28,7 @@ impl TokenBlacklist {
         let key = format!("blacklist:{}", token);
 
         // 设置 key 并带上过期时间
-        conn.set_ex(key, "1", ttl_seconds)
+        conn.set_ex::<_, _, ()>(key, "1", ttl_seconds)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to add token to blacklist: {}", e))?;
 
