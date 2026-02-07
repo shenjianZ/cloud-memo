@@ -1,4 +1,4 @@
-use crate::models::{UserProfile, CreateProfileRequest, UpdateProfileRequest, error::{Result, AppError}};
+use crate::models::{UserProfile, error::{Result, AppError}};
 use crate::database::DbPool;
 use r2d2_sqlite::rusqlite::{self as rusqlite, Row, params};
 

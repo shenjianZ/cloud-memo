@@ -1,5 +1,5 @@
-use r2d2_sqlite::rusqlite::Connection;
 use anyhow::Result;
+use r2d2_sqlite::rusqlite::Connection;
 
 /// 初始化数据库表结构
 ///
@@ -36,9 +36,9 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             icon TEXT,
             color TEXT,
             sort_order INTEGER DEFAULT 0,
-            is_deleted BOOLEAN DEFAULT 0,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
+            is_deleted BOOLEAN DEFAULT 0,
             deleted_at INTEGER,
             -- 云端同步字段
             server_ver INTEGER DEFAULT 0,
@@ -52,13 +52,21 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             name TEXT NOT NULL UNIQUE,
             color TEXT,
             created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL
+            updated_at INTEGER NOT NULL,
+            is_deleted BOOLEAN DEFAULT 0,
+            deleted_at INTEGER,
+            -- 云端同步字段
+            server_ver INTEGER DEFAULT 0,
+            is_dirty BOOLEAN DEFAULT 0,
+            last_synced_at INTEGER
         );
 
         CREATE TABLE IF NOT EXISTS note_tags (
             note_id TEXT NOT NULL,
             tag_id TEXT NOT NULL,
             created_at INTEGER NOT NULL,
+            is_deleted BOOLEAN DEFAULT 0,
+            deleted_at INTEGER,
             PRIMARY KEY (note_id, tag_id),
             FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE,
             FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
@@ -90,8 +98,11 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_notes_is_deleted ON notes(is_deleted);
         CREATE INDEX IF NOT EXISTS idx_notes_is_favorite ON notes(is_favorite);
         CREATE INDEX IF NOT EXISTS idx_folders_parent_id ON folders(parent_id);
+        CREATE INDEX IF NOT EXISTS idx_folders_is_deleted ON folders(is_deleted);
+        CREATE INDEX IF NOT EXISTS idx_tags_is_deleted ON tags(is_deleted);
         CREATE INDEX IF NOT EXISTS idx_note_tags_note_id ON note_tags(note_id);
         CREATE INDEX IF NOT EXISTS idx_note_tags_tag_id ON note_tags(tag_id);
+        CREATE INDEX IF NOT EXISTS idx_note_tags_is_deleted ON note_tags(is_deleted);
 
         CREATE TABLE IF NOT EXISTS editor_settings (
             id INTEGER PRIMARY KEY,
@@ -114,6 +125,9 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             content TEXT NOT NULL,
             snapshot_name TEXT,
             created_at INTEGER NOT NULL,
+            server_ver INTEGER DEFAULT 1,
+            is_dirty BOOLEAN DEFAULT 1,
+            last_synced_at INTEGER,
             FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
         );
 
@@ -180,9 +194,17 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             updated_at INTEGER NOT NULL
         );
 
+        -- 设置表（键值对存储，用于存储各种配置）
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+            updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+        );
+
         -- 初始化默认配置
         INSERT OR IGNORE INTO app_settings (id, default_server_url, auto_sync_enabled, sync_interval_minutes, theme, language, updated_at)
-        VALUES (1, 'https://api.noteapp.com', 1, 5, 'system', 'zh-CN', 1710000000);
+        VALUES (1, 'http://localhost:3000', 0, 5, 'system', 'zh-CN', 1710000000);
     "
     )?;
 

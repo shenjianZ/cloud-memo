@@ -1,28 +1,36 @@
-use crate::services::AuthService;
+use crate::services::{AuthService, AutoSyncService};
 use crate::models::{LoginRequest, RegisterRequest, AuthResponse, User, AccountWithProfile};
 use tauri::State;
 
 /// Auth service 类型别名
 type AuthSvc<'a> = State<'a, AuthService>;
+type AutoSyncSvc<'a> = State<'a, AutoSyncService>;
 
-/// 用户登录
+/// 用户登录（成功后自动启动自动同步）
 #[tauri::command]
 pub async fn login(
     req: LoginRequest,
     auth_service: AuthSvc<'_>,
+    auto_sync: AutoSyncSvc<'_>,
 ) -> std::result::Result<AuthResponse, String> {
     log::info!("[commands/auth.rs::login] 收到登录请求: email={}, server_url={}", req.email, req.server_url);
 
-    auth_service.login(req)
+    let result = auth_service.login(req)
         .await
         .map_err(|e| {
             log::error!("[commands/auth.rs::login] 登录失败: {}", e);
             e.to_string()
-        })
-        .map(|result| {
-            log::info!("[commands/auth.rs::login] 登录成功: user_id={}, email={}", result.user_id, result.email);
-            result
-        })
+        })?;
+
+    log::info!("[commands/auth.rs::login] 登录成功: user_id={}, email={}", result.user_id, result.email);
+
+    // 登录成功后启动自动同步服务
+    log::info!("[commands/auth.rs::login] 启动自动同步服务");
+    if let Err(e) = auto_sync.start().await {
+        log::warn!("[commands/auth.rs::login] 启动自动同步服务失败: {}", e);
+    }
+
+    Ok(result)
 }
 
 /// 用户注册
@@ -44,12 +52,17 @@ pub async fn register(
     Ok(result)
 }
 
-/// 用户登出
+/// 用户登出（先停止自动同步服务）
 #[tauri::command]
 pub async fn logout(
     service: AuthSvc<'_>,
+    auto_sync: AutoSyncSvc<'_>,
 ) -> std::result::Result<(), String> {
     log::info!("[commands/auth.rs::logout] 收到登出请求");
+
+    // 先停止自动同步服务
+    log::info!("[commands/auth.rs::logout] 停止自动同步服务");
+    auto_sync.stop().await;
 
     service.logout()
         .map_err(|e| {
@@ -167,5 +180,24 @@ pub async fn refresh_access_token(
         .map(|result| {
             log::info!("[commands/auth.rs::refresh_access_token] 刷新成功: user_id={}", result.user_id);
             result
+        })
+}
+
+/// 删除账号（需要密码验证）
+#[tauri::command]
+pub async fn delete_account(
+    password: String,
+    service: AuthSvc<'_>,
+) -> std::result::Result<(), String> {
+    log::info!("[commands/auth.rs::delete_account] 删除账号请求");
+
+    service.delete_account(password)
+        .await
+        .map_err(|e| {
+            log::error!("[commands/auth.rs::delete_account] 删除失败: {}", e);
+            e.to_string()
+        })
+        .map(|_| {
+            log::info!("[commands/auth.rs::delete_account] 删除成功");
         })
 }

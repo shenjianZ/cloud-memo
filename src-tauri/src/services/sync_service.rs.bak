@@ -1,0 +1,1187 @@
+use crate::models::{
+    Note, Folder, Tag, NoteSnapshot, SyncRequest, SyncResponse, SyncReport, ConflictStrategy,
+    ConflictInfo, SyncStatus, SyncType, NoteTagRelation
+};
+use crate::models::error::{Result, AppError};
+use crate::services::CryptoService;
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
+use r2d2_sqlite::rusqlite::{self, params};
+use reqwest::Client;
+use std::time::Duration;
+use std::clone::Clone;
+
+/// 同步服务
+///
+/// 处理与云服务器的双向同步
+#[derive(Clone)]
+pub struct SyncService {
+    pool: Pool<SqliteConnectionManager>,
+    client: Client,
+}
+
+impl SyncService {
+    /// 创建新的 SyncService 实例
+    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("Failed to create HTTP client");
+
+        Self { pool, client }
+    }
+
+    /// 获取数据库连接池（供其他服务使用）
+    pub fn get_pool(&self) -> &Pool<SqliteConnectionManager> {
+        &self.pool
+    }
+
+    /// 获取上次同步时间（别名方法，供 SingleSyncService 使用）
+    pub fn get_last_sync_time(&self) -> Result<Option<i64>> {
+        self.get_last_sync_at()
+    }
+
+    /// 获取服务器 URL、解密后的 token 和 device_id
+    fn get_auth_info(&self) -> Result<(String, String, String)> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT server_url, access_token_encrypted, device_id
+             FROM user_auth
+             WHERE is_current = 1"
+        ).map_err(|e| AppError::DatabaseError(format!("查询认证信息失败: {}", e)))?;
+
+        let (server_url, encrypted_token, device_id) = stmt.query_row([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        }).map_err(|_| AppError::NotAuthenticated("用户未登录".to_string()))?;
+
+        // 使用 device_id 解密 token
+        let key = CryptoService::derive_key_from_device_id(&device_id);
+        let token = CryptoService::decrypt_token(&encrypted_token, &key)?;
+
+        Ok((server_url, token, device_id))
+    }
+
+    /// 完整同步（一次 HTTP 请求）
+    pub async fn full_sync(&self) -> Result<SyncReport> {
+        log::info!("Starting full sync");
+
+        // 1. 收集本地修改
+        let request = self.build_sync_request()?;
+
+        // 2. 发送同步请求
+        let response = self.send_sync_request(&request).await?;
+
+        // 3. 应用服务器响应
+        self.apply_sync_response(&response)?;
+
+        // 4. 清理脏标记
+        self.clear_dirty_markers(&request, response.last_sync_at)?;
+
+        // 5. 更新同步状态
+        self.update_sync_state(response.last_sync_at, response.conflicts.len() as i32)?;
+
+        let report = SyncReport {
+            success: response.status != "error",
+            pushed_count: request.notes.as_ref().map_or(0, |v| v.len())
+                + request.folders.as_ref().map_or(0, |v| v.len())
+                + request.tags.as_ref().map_or(0, |v| v.len())
+                + request.snapshots.as_ref().map_or(0, |v| v.len()),
+            pulled_count: response.upserted_notes.len() + response.upserted_folders.len()
+                + response.upserted_tags.len() + response.upserted_snapshots.len()
+                + response.deleted_note_ids.len() + response.deleted_folder_ids.len()
+                + response.deleted_tag_ids.len(),
+            conflict_count: response.conflicts.len(),
+            error: if response.status == "error" {
+                Some("Sync failed".to_string())
+            } else {
+                None
+            },
+        };
+
+        log::info!("Full sync completed: pushed={}, pulled={}, conflicts={}",
+            report.pushed_count, report.pulled_count, report.conflict_count);
+
+        Ok(report)
+    }
+
+    /// 灵活同步（可指定类型）
+    pub async fn sync_types(&self, types: &[SyncType]) -> Result<SyncReport> {
+        let sync_all = types.contains(&SyncType::All);
+        let sync_notes = sync_all || types.contains(&SyncType::Notes);
+        let sync_folders = sync_all || types.contains(&SyncType::Folders);
+        let sync_tags = sync_all || types.contains(&SyncType::Tags);
+        let sync_snapshots = sync_all || types.contains(&SyncType::Snapshots);
+
+        // 收集需要同步的数据
+        let request = SyncRequest {
+            conflict_resolution: ConflictStrategy::default(),
+            device_id: None, // 在 send_sync_request 中设置
+            notes: if sync_notes { Some(self.get_dirty_notes()?.into_iter().map(|n| n.into()).collect()) } else { None },
+            folders: if sync_folders { Some(self.get_dirty_folders()?.into_iter().map(|f| f.into()).collect()) } else { None },
+            tags: if sync_tags { Some(self.get_dirty_tags()?.into_iter().map(|t| t.into()).collect()) } else { None },
+            snapshots: if sync_snapshots { Some(self.get_dirty_snapshots()?.into_iter().map(|s| s.into()).collect()) } else { None },
+            note_tags: if sync_tags { Some(self.get_note_tags_relations()?.into_iter().map(|nt| nt.into()).collect()) } else { None },
+            last_sync_at: self.get_last_sync_at()?,
+        };
+
+        // 发送同步请求
+        let response = self.send_sync_request(&request).await?;
+
+        // 应用服务器响应
+        self.apply_sync_response(&response)?;
+
+        // 清理脏标记
+        self.clear_dirty_markers(&request, response.last_sync_at)?;
+
+        // 更新同步状态
+        self.update_sync_state(response.last_sync_at, response.conflicts.len() as i32)?;
+
+        Ok(SyncReport {
+            success: response.status != "error",
+            pushed_count: request.notes.as_ref().map_or(0, |v| v.len())
+                + request.folders.as_ref().map_or(0, |v| v.len())
+                + request.tags.as_ref().map_or(0, |v| v.len())
+                + request.snapshots.as_ref().map_or(0, |v| v.len()),
+            pulled_count: response.upserted_notes.len() + response.upserted_folders.len()
+                + response.upserted_tags.len() + response.upserted_snapshots.len()
+                + response.deleted_note_ids.len() + response.deleted_folder_ids.len()
+                + response.deleted_tag_ids.len(),
+            conflict_count: response.conflicts.len(),
+            error: None,
+        })
+    }
+
+    /// 单独同步笔记
+    pub async fn sync_notes(&self) -> Result<SyncReport> {
+        self.sync_types(&[SyncType::Notes]).await
+    }
+
+    /// 单独同步文件夹
+    pub async fn sync_folders(&self) -> Result<SyncReport> {
+        self.sync_types(&[SyncType::Folders]).await
+    }
+
+    /// 单独同步标签
+    pub async fn sync_tags(&self) -> Result<SyncReport> {
+        self.sync_types(&[SyncType::Tags]).await
+    }
+
+    /// 单独同步快照
+    pub async fn sync_snapshots(&self) -> Result<SyncReport> {
+        self.sync_types(&[SyncType::Snapshots]).await
+    }
+
+    /// 获取同步状态
+    pub fn get_sync_status(&self) -> Result<SyncStatus> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT last_sync_at, pending_count, conflict_count, last_error
+             FROM sync_state
+             WHERE id = 1"
+        ).map_err(|e| AppError::DatabaseError(format!("获取同步状态失败: {}", e)))?;
+
+        let status = stmt.query_row([], |row| {
+            Ok(SyncStatus {
+                last_sync_at: row.get(0)?,
+                pending_count: row.get(1)?,
+                conflict_count: row.get(2)?,
+                last_error: row.get(3)?,
+            })
+        }).unwrap_or_else(|_| SyncStatus {
+            last_sync_at: None,
+            pending_count: 0,
+            conflict_count: 0,
+            last_error: None,
+        });
+
+        Ok(status)
+    }
+
+    // ===== 私有方法 =====
+
+    /// 构建同步请求
+    fn build_sync_request(&self) -> Result<SyncRequest> {
+        Ok(SyncRequest {
+            notes: Some(self.get_dirty_notes()?.into_iter().map(|n| n.into()).collect()),
+            folders: Some(self.get_dirty_folders()?.into_iter().map(|f| f.into()).collect()),
+            tags: Some(self.get_dirty_tags()?.into_iter().map(|t| t.into()).collect()),
+            snapshots: Some(self.get_dirty_snapshots()?.into_iter().map(|s| s.into()).collect()),
+            note_tags: Some(self.get_note_tags_relations()?.into_iter().map(|nt| nt.into()).collect()),
+            last_sync_at: self.get_last_sync_at()?,
+            conflict_resolution: ConflictStrategy::default(),
+            device_id: None, // 在 send_sync_request 中设置
+        })
+    }
+
+    /// 发送同步请求到服务器（公共方法，供其他服务使用）
+    pub async fn send_sync_request(&self, request: &SyncRequest) -> Result<SyncResponse> {
+        let (server_url, token, device_id) = self.get_auth_info()?;
+        let url = format!("{}/sync", server_url.trim_end_matches('/'));
+
+        log::info!("Sending sync request to {}", url);
+
+        // 创建包含 device_id 的请求
+        let mut request_with_device = request.clone();
+        request_with_device.device_id = Some(device_id.clone());
+
+        // 尝试发送请求
+        let response = self.client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Content-Type", "application/json")
+            .json(&request_with_device)
+            .send()
+            .await;
+
+        let response = match response {
+            Ok(r) => r,
+            Err(e) => {
+                log::error!("Failed to send sync request: {}", e);
+                return Err(AppError::NetworkError(format!("同步请求失败: {}", e)));
+            }
+        };
+
+        let status = response.status();
+
+        // 如果是 401 未授权，尝试刷新 token
+        if status.as_u16() == 401 {
+            log::info!("Access token expired, attempting to refresh");
+
+            // 刷新 token
+            use crate::services::AuthService;
+            let auth_service = AuthService::new(self.pool.clone());
+            let refresh_result = auth_service.refresh_access_token().await;
+
+            match refresh_result {
+                Ok(_) => {
+                    log::info!("Token refreshed successfully, retrying sync request");
+
+                    // 重新获取认证信息
+                    let (server_url, new_token, device_id) = self.get_auth_info()?;
+                    let mut request_with_device = request.clone();
+                    request_with_device.device_id = Some(device_id);
+
+                    // 重试请求
+                    let response = self.client
+                        .post(&format!("{}/sync", server_url.trim_end_matches('/')))
+                        .header("Authorization", format!("Bearer {}", new_token))
+                        .header("Content-Type", "application/json")
+                        .json(&request_with_device)
+                        .send()
+                        .await
+                        .map_err(|e| {
+                            log::error!("Failed to retry sync request: {}", e);
+                            AppError::NetworkError(format!("重试同步请求失败: {}", e))
+                        })?;
+
+                    return self.parse_sync_response(response).await;
+                }
+                Err(e) => {
+                    log::error!("Failed to refresh token: {}", e);
+                    return Err(AppError::AuthenticationError(format!("Token 刷新失败: {}", e)));
+                }
+            }
+        }
+
+        self.parse_sync_response(response).await
+    }
+
+    /// 解析同步响应
+    async fn parse_sync_response(&self, response: reqwest::Response) -> Result<SyncResponse> {
+        let status = response.status();
+
+        // 解析响应为 JSON
+        let response_json: serde_json::Value = response.json().await.map_err(|e| {
+            log::error!("Failed to parse response: {}", e);
+            AppError::NetworkError(format!("响应无效: {}", e))
+        })?;
+
+        if !status.is_success() {
+            let error_msg = response_json["error"]
+                .as_str()
+                .unwrap_or("Unknown error");
+            log::error!("Server returned error {}: {}", status, error_msg);
+            return Err(AppError::SyncError(error_msg.to_string()));
+        }
+
+        // 直接反序列化为 SyncResponse（服务器和客户端都使用 snake_case）
+        let sync_response: SyncResponse = serde_json::from_value(response_json).map_err(|e| {
+            log::error!("Failed to parse sync response: {}", e);
+            AppError::NetworkError(format!("同步响应无效: {}", e))
+        })?;
+
+        log::info!("Sync completed: status={}, upserted={}, deleted={}, conflicts={}",
+            sync_response.status,
+            sync_response.upserted_notes.len() + sync_response.upserted_folders.len()
+                + sync_response.upserted_tags.len() + sync_response.upserted_snapshots.len(),
+            sync_response.deleted_note_ids.len() + sync_response.deleted_folder_ids.len()
+                + sync_response.deleted_tag_ids.len(),
+            sync_response.conflicts.len()
+        );
+
+        Ok(sync_response)
+    }
+
+    /// 应用服务器响应
+    pub fn apply_sync_response(&self, response: &SyncResponse) -> Result<()> {
+        // 1. 应用 upserted 数据（新增或更新）
+        let sync_time = response.last_sync_at;
+        for note in &response.upserted_notes {
+            self.apply_server_note(note, sync_time)?;
+        }
+        for folder in &response.upserted_folders {
+            self.apply_server_folder(folder, sync_time)?;
+        }
+        for tag in &response.upserted_tags {
+            self.apply_server_tag(tag, sync_time)?;
+        }
+        for snapshot in &response.upserted_snapshots {
+            self.apply_server_snapshot(snapshot, sync_time)?;
+        }
+        for relation in &response.upserted_note_tags {
+            self.apply_server_note_tag(relation)?;
+        }
+
+        // 2. 应用 deleted 数据（使用软删除）
+        for note_id in &response.deleted_note_ids {
+            // 标记笔记为已删除（软删除）
+            self.mark_note_deleted(note_id)?;
+        }
+        for folder_id in &response.deleted_folder_ids {
+            // 标记文件夹为已删除（软删除，级联删除子文件夹）
+            self.mark_folder_deleted(folder_id)?;
+        }
+        for tag_id in &response.deleted_tag_ids {
+            // 标记标签为已删除（软删除，级联删除 note_tags 关联）
+            self.mark_tag_deleted(tag_id)?;
+        }
+
+        // 3. 处理冲突
+        for conflict in &response.conflicts {
+            self.resolve_conflict(conflict)?;
+        }
+
+        Ok(())
+    }
+
+    /// 清理脏标记
+    pub fn clear_dirty_markers(&self, request: &SyncRequest, sync_time: i64) -> Result<()> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        // 清理 notes
+        if let Some(notes) = &request.notes {
+            for note in notes {
+                conn.execute(
+                    "UPDATE notes SET is_dirty = 0, last_synced_at = ? WHERE id = ?",
+                    (sync_time, &note.id),
+                ).map_err(|e| AppError::DatabaseError(format!("清除笔记脏标记失败: {}", e)))?;
+            }
+        }
+
+        // 清理 folders
+        if let Some(folders) = &request.folders {
+            for folder in folders {
+                conn.execute(
+                    "UPDATE folders SET is_dirty = 0, last_synced_at = ? WHERE id = ?",
+                    (sync_time, &folder.id),
+                ).map_err(|e| AppError::DatabaseError(format!("清除文件夹脏标记失败: {}", e)))?;
+            }
+        }
+
+        // 清理 tags
+        if let Some(tags) = &request.tags {
+            for tag in tags {
+                conn.execute(
+                    "UPDATE tags SET is_dirty = 0, last_synced_at = ? WHERE id = ?",
+                    (sync_time, &tag.id),
+                ).map_err(|e| AppError::DatabaseError(format!("清除标签脏标记失败: {}", e)))?;
+            }
+        }
+
+        // 清理 snapshots
+        if let Some(snapshots) = &request.snapshots {
+            for snapshot in snapshots {
+                conn.execute(
+                    "UPDATE note_snapshots SET is_dirty = 0, last_synced_at = ? WHERE id = ?",
+                    (sync_time, &snapshot.id),
+                ).map_err(|e| AppError::DatabaseError(format!("清除快照脏标记失败: {}", e)))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 获取所有脏笔记
+    fn get_dirty_notes(&self) -> Result<Vec<Note>> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT id, title, content, excerpt, markdown_cache, folder_id,
+                    is_favorite, is_deleted, is_pinned, author,
+                    created_at, updated_at, deleted_at, word_count, read_time_minutes,
+                    server_ver, is_dirty, last_synced_at
+             FROM notes
+             WHERE is_dirty = 1"
+        ).map_err(|e| AppError::DatabaseError(format!("Failed to get dirty notes: {}", e)))?;
+
+        let notes = stmt.query_map([], |row| {
+            Ok(Note {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                content: row.get(2)?,
+                excerpt: row.get(3)?,
+                markdown_cache: row.get(4)?,
+                folder_id: row.get(5)?,
+                is_favorite: row.get(6)?,
+                is_deleted: row.get(7)?,
+                is_pinned: row.get(8)?,
+                author: row.get(9)?,
+                created_at: row.get(10)?,
+                updated_at: row.get(11)?,
+                deleted_at: row.get(12)?,
+                word_count: row.get(13)?,
+                read_time_minutes: row.get(14)?,
+                server_ver: row.get(15)?,
+                is_dirty: row.get(16)?,
+                last_synced_at: row.get(17)?,
+            })
+        })
+        .map_err(|e| AppError::DatabaseError(format!("Failed to parse notes: {}", e)))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| AppError::DatabaseError(format!("Failed to collect notes: {}", e)))?;
+
+        Ok(notes)
+    }
+
+    /// 获取所有脏文件夹
+    fn get_dirty_folders(&self) -> Result<Vec<Folder>> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT id, name, parent_id, icon, color, sort_order,
+                    created_at, updated_at,
+                    server_ver, is_dirty, last_synced_at
+             FROM folders
+             WHERE is_dirty = 1"
+        ).map_err(|e| AppError::DatabaseError(format!("Failed to get dirty folders: {}", e)))?;
+
+        let folders = stmt.query_map([], |row| {
+            Ok(Folder {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                parent_id: row.get(2)?,
+                icon: row.get(3)?,
+                color: row.get(4)?,
+                sort_order: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+                server_ver: row.get(8)?,
+                is_dirty: row.get(9)?,
+                last_synced_at: row.get(10)?,
+            })
+        })
+        .map_err(|e| AppError::DatabaseError(format!("Failed to parse folders: {}", e)))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| AppError::DatabaseError(format!("Failed to collect folders: {}", e)))?;
+
+        Ok(folders)
+    }
+
+    /// 获取所有脏标签
+    fn get_dirty_tags(&self) -> Result<Vec<Tag>> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT id, name, color, created_at, updated_at, server_ver, is_dirty, last_synced_at
+             FROM tags
+             WHERE is_dirty = 1"
+        ).map_err(|e| AppError::DatabaseError(format!("Failed to get dirty tags: {}", e)))?;
+
+        let tags = stmt.query_map([], |row| {
+            Ok(Tag {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                color: row.get(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+                server_ver: row.get(5)?,
+                is_dirty: row.get(6)?,
+                last_synced_at: row.get(7)?,
+            })
+        })
+        .map_err(|e| AppError::DatabaseError(format!("Failed to parse tags: {}", e)))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| AppError::DatabaseError(format!("Failed to collect tags: {}", e)))?;
+
+        Ok(tags)
+    }
+
+    /// 获取所有脏快照
+    fn get_dirty_snapshots(&self) -> Result<Vec<NoteSnapshot>> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT id, note_id, title, content, snapshot_name,
+                    created_at, server_ver, is_dirty, last_synced_at
+             FROM note_snapshots
+             WHERE is_dirty = 1"
+        ).map_err(|e| AppError::DatabaseError(format!("Failed to get dirty snapshots: {}", e)))?;
+
+        let snapshots = stmt.query_map([], |row| {
+            Ok(NoteSnapshot {
+                id: row.get(0)?,
+                note_id: row.get(1)?,
+                title: row.get(2)?,
+                content: row.get(3)?,
+                snapshot_name: row.get(4)?,
+                created_at: row.get(5)?,
+                server_ver: row.get(6)?,
+                is_dirty: row.get(7)?,
+                last_synced_at: row.get(8)?,
+            })
+        })
+        .map_err(|e| AppError::DatabaseError(format!("Failed to parse snapshots: {}", e)))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| AppError::DatabaseError(format!("Failed to collect snapshots: {}", e)))?;
+
+        Ok(snapshots)
+    }
+
+    /// 获取所有笔记标签关联（统一同步范围）
+    fn get_note_tags_relations(&self) -> Result<Vec<NoteTagRelation>> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        // 查询所有标签关联（与服务端保持一致）
+        let mut stmt = conn.prepare(
+            "SELECT nt.note_id, nt.tag_id, nt.created_at
+             FROM note_tags nt"
+        ).map_err(|e| AppError::DatabaseError(format!("Failed to get note tags: {}", e)))?;
+
+        let note_tags = stmt.query_map([], |row| {
+            Ok(NoteTagRelation {
+                note_id: row.get(0)?,
+                tag_id: row.get(1)?,
+                user_id: String::new(), // 本地不存储 user_id，同步时会填充
+                created_at: row.get(2)?,
+            })
+        })
+        .map_err(|e| AppError::DatabaseError(format!("Failed to parse note tags: {}", e)))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| AppError::DatabaseError(format!("Failed to collect note tags: {}", e)))?;
+
+        Ok(note_tags)
+    }
+
+    /// 应用服务器笔记
+    fn apply_server_note(&self, server_note: &crate::models::sync::ServerNote, sync_time: i64) -> Result<()> {
+        // 将 ServerNote 转换为 Note
+        let note: Note = server_note.clone().into();
+
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        // 使用 INSERT ... ON CONFLICT ... DO UPDATE 代替 INSERT OR REPLACE
+        // 关键改进：只在 folder_id 不为 None 时才更新 folder_id
+        // 这样可以避免服务器返回 null 时覆盖本地有效的 folder_id
+        conn.execute(
+            "INSERT INTO notes
+             (id, title, content, excerpt, markdown_cache, folder_id,
+              is_favorite, is_deleted, is_pinned, author,
+              created_at, updated_at, deleted_at, word_count, read_time_minutes,
+              server_ver, is_dirty, last_synced_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+                     ?11, ?12, ?13, ?14, ?15, ?16, ?17, 0, ?18)
+             ON CONFLICT(id) DO UPDATE SET
+                title = excluded.title,
+                content = excluded.content,
+                excerpt = excluded.excerpt,
+                markdown_cache = excluded.markdown_cache,
+                folder_id = COALESCE(excluded.folder_id, notes.folder_id),
+                is_favorite = excluded.is_favorite,
+                is_deleted = excluded.is_deleted,
+                is_pinned = excluded.is_pinned,
+                author = excluded.author,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at,
+                deleted_at = excluded.deleted_at,
+                word_count = excluded.word_count,
+                read_time_minutes = excluded.read_time_minutes,
+                server_ver = excluded.server_ver,
+                is_dirty = 0,
+                last_synced_at = excluded.last_synced_at",
+            [
+                &note.id as &dyn rusqlite::ToSql, &note.title, &note.content, &note.excerpt,
+                &note.markdown_cache, &note.folder_id, &note.is_favorite as &dyn rusqlite::ToSql,
+                &note.is_deleted as &dyn rusqlite::ToSql, &note.is_pinned as &dyn rusqlite::ToSql,
+                &note.author, &note.created_at as &dyn rusqlite::ToSql, &note.updated_at as &dyn rusqlite::ToSql,
+                &note.deleted_at as &dyn rusqlite::ToSql, &note.word_count as &dyn rusqlite::ToSql,
+                &note.read_time_minutes as &dyn rusqlite::ToSql,
+                &server_note.server_ver as &dyn rusqlite::ToSql,  // 使用服务器的 server_ver
+                &sync_time as &dyn rusqlite::ToSql,
+            ],
+        ).map_err(|e| AppError::DatabaseError(format!("应用服务器笔记失败: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// 应用服务器文件夹
+    fn apply_server_folder(&self, server_folder: &crate::models::sync::ServerFolder, sync_time: i64) -> Result<()> {
+        // 将 ServerFolder 转换为 Folder
+        let folder: Folder = server_folder.clone().into();
+
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        // 使用 INSERT ... ON CONFLICT ... DO UPDATE 代替 INSERT OR REPLACE
+        // 关键改进：只在 parent_id 不为 None 时才更新 parent_id
+        // 这样可以避免服务器返回 null 时覆盖本地有效的 parent_id
+        conn.execute(
+            "INSERT INTO folders
+             (id, name, parent_id, icon, color, sort_order,
+              created_at, updated_at,
+              server_ver, is_dirty, last_synced_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10)
+             ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                parent_id = COALESCE(excluded.parent_id, folders.parent_id),
+                icon = excluded.icon,
+                color = excluded.color,
+                sort_order = excluded.sort_order,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at,
+                server_ver = excluded.server_ver,
+                is_dirty = 0,
+                last_synced_at = excluded.last_synced_at",
+            (
+                &folder.id, &folder.name, &folder.parent_id, &folder.icon,
+                &folder.color, folder.sort_order,
+                folder.created_at, folder.updated_at,
+                server_folder.server_ver,  // 使用服务器的 server_ver
+                sync_time,
+            ),
+        ).map_err(|e| AppError::DatabaseError(format!("应用服务器文件夹失败: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// 应用服务器标签
+    fn apply_server_tag(&self, server_tag: &crate::models::sync::ServerTag, sync_time: i64) -> Result<()> {
+        // 将 ServerTag 转换为 Tag
+        let tag: Tag = server_tag.clone().into();
+
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        // 使用 INSERT ... ON CONFLICT ... DO UPDATE 代替 INSERT OR REPLACE
+        // 保持一致性，避免意外覆盖本地数据
+        conn.execute(
+            "INSERT INTO tags
+             (id, name, color, created_at, updated_at, server_ver, is_dirty, last_synced_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7)
+             ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                color = COALESCE(excluded.color, tags.color),
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at,
+                server_ver = excluded.server_ver,
+                is_dirty = 0,
+                last_synced_at = excluded.last_synced_at",
+            (
+                &tag.id, &tag.name, &tag.color, tag.created_at, tag.updated_at,
+                server_tag.server_ver,  // 使用服务器的 server_ver
+                sync_time,
+            ),
+        ).map_err(|e| AppError::DatabaseError(format!("应用服务器标签失败: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// 应用服务器快照
+    fn apply_server_snapshot(&self, server_snapshot: &crate::models::sync::ServerNoteSnapshot, sync_time: i64) -> Result<()> {
+        // 将 ServerNoteSnapshot 转换为 NoteSnapshot
+        let snapshot: NoteSnapshot = server_snapshot.clone().into();
+
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        // 使用 INSERT ... ON CONFLICT ... DO UPDATE 代替 INSERT OR REPLACE
+        // 保持一致性，避免意外覆盖本地数据
+        // 关键改进：只在 snapshot_name 不为 None 时才更新 snapshot_name
+        conn.execute(
+            "INSERT INTO note_snapshots
+             (id, note_id, title, content, snapshot_name,
+              created_at, server_ver, is_dirty, last_synced_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8)
+             ON CONFLICT(id) DO UPDATE SET
+                note_id = excluded.note_id,
+                title = excluded.title,
+                content = excluded.content,
+                snapshot_name = COALESCE(excluded.snapshot_name, note_snapshots.snapshot_name),
+                created_at = excluded.created_at,
+                server_ver = excluded.server_ver,
+                is_dirty = 0,
+                last_synced_at = excluded.last_synced_at",
+            (
+                &snapshot.id, &snapshot.note_id, &snapshot.title,
+                &snapshot.content, &snapshot.snapshot_name,
+                snapshot.created_at,
+                server_snapshot.server_ver,  // 使用服务器的 server_ver
+                sync_time,
+            ),
+        ).map_err(|e| AppError::DatabaseError(format!("应用服务器快照失败: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// 应用服务器笔记标签关联
+    fn apply_server_note_tag(&self, server_relation: &crate::models::sync::ServerNoteTagRelation) -> Result<()> {
+        // 将 ServerNoteTagRelation 转换为 NoteTagRelation
+        let relation: NoteTagRelation = server_relation.clone().into();
+
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        // 使用 INSERT OR IGNORE - 如果关联已存在则忽略
+        // 因为关联表没有版本号等需要更新的字段
+        conn.execute(
+            "INSERT OR IGNORE INTO note_tags (note_id, tag_id, created_at)
+             VALUES (?1, ?2, ?3)",
+            (&relation.note_id, &relation.tag_id, relation.created_at),
+        ).map_err(|e| AppError::DatabaseError(format!("应用服务器笔记标签关联失败: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// 标记笔记为已删除
+    fn mark_note_deleted(&self, note_id: &str) -> Result<()> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "UPDATE notes SET is_deleted = 1, deleted_at = ?, is_dirty = 0 WHERE id = ?",
+            params![now, note_id],
+        ).map_err(|e| AppError::DatabaseError(format!("标记笔记已删除失败: {}", e)))?;
+
+        log::debug!("Note marked as deleted: {}", note_id);
+        Ok(())
+    }
+
+    /// 标记文件夹为已删除（服务器删除）
+    fn mark_folder_deleted(&self, folder_id: &str) -> Result<()> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        let now = chrono::Utc::now().timestamp();
+
+        // 软删除文件夹及所有子文件夹
+        conn.execute(
+            "WITH RECURSIVE folder_tree AS (
+                SELECT id FROM folders WHERE id = ?1
+                UNION ALL
+                SELECT f.id FROM folders f
+                INNER JOIN folder_tree ft ON f.parent_id = ft.id
+                WHERE f.is_deleted = 0
+            )
+            UPDATE folders SET is_deleted = 1, deleted_at = ?2, is_dirty = 0
+            WHERE id IN folder_tree",
+            params![folder_id, now],
+        ).map_err(|e| AppError::DatabaseError(format!("标记文件夹删除失败: {}", e)))?;
+
+        log::debug!("Folder marked as deleted: {}", folder_id);
+        Ok(())
+    }
+
+    /// 标记标签为已删除（服务器删除）
+    fn mark_tag_deleted(&self, tag_id: &str) -> Result<()> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        let now = chrono::Utc::now().timestamp();
+
+        // 软删除标签
+        conn.execute(
+            "UPDATE tags SET is_deleted = 1, deleted_at = ?, is_dirty = 0 WHERE id = ?",
+            params![now, tag_id],
+        ).map_err(|e| AppError::DatabaseError(format!("标记标签删除失败: {}", e)))?;
+
+        // 同时软删除所有关联的 note_tags
+        conn.execute(
+            "UPDATE note_tags SET is_deleted = 1, deleted_at = ? WHERE tag_id = ?",
+            params![now, tag_id],
+        ).map_err(|e| AppError::DatabaseError(format!("标记 note_tags 删除失败: {}", e)))?;
+
+        log::debug!("Tag marked as deleted: {}", tag_id);
+        Ok(())
+    }
+
+    /// 删除文件夹（硬删除 - 仅用于本地清理）
+    fn delete_folder(&self, folder_id: &str) -> Result<()> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        conn.execute(
+            "DELETE FROM folders WHERE id = ?",
+            [folder_id],
+        ).map_err(|e| AppError::DatabaseError(format!("删除文件夹失败: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// 删除标签（硬删除 - 仅用于本地清理）
+    fn delete_tag(&self, tag_id: &str) -> Result<()> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        conn.execute(
+            "DELETE FROM tags WHERE id = ?",
+            [tag_id],
+        ).map_err(|e| AppError::DatabaseError(format!("删除标签失败: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// 解决冲突（创建冲突副本）
+    fn resolve_conflict(&self, conflict: &ConflictInfo) -> Result<()> {
+        match conflict.entity_type.as_str() {
+            "note" => {
+                let original_note = self.get_note_by_id(&conflict.id)?
+                    .ok_or(AppError::NotFound(format!("Note {} not found", conflict.id)))?;
+
+                let conflict_note = original_note.conflict_copy("冲突副本 - 本地");
+
+                let conn = self.pool.get()
+                    .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+                conn.execute(
+                    "INSERT INTO notes
+                     (id, title, content, excerpt, markdown_cache, folder_id,
+                      is_favorite, is_deleted, is_pinned, author,
+                      created_at, updated_at, deleted_at, word_count, read_time_minutes,
+                      server_ver, is_dirty, last_synced_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+                             ?11, ?12, ?13, ?14, ?15, ?16, 1, ?17)",
+                    [
+                        &conflict_note.id as &dyn rusqlite::ToSql, &conflict_note.title,
+                        &conflict_note.content, &conflict_note.excerpt, &conflict_note.markdown_cache,
+                        &conflict_note.folder_id, &conflict_note.is_favorite as &dyn rusqlite::ToSql,
+                        &conflict_note.is_deleted as &dyn rusqlite::ToSql,
+                        &conflict_note.is_pinned as &dyn rusqlite::ToSql,
+                        &conflict_note.author, &conflict_note.created_at as &dyn rusqlite::ToSql,
+                        &conflict_note.updated_at as &dyn rusqlite::ToSql,
+                        &conflict_note.deleted_at as &dyn rusqlite::ToSql,
+                        &conflict_note.word_count as &dyn rusqlite::ToSql,
+                        &conflict_note.read_time_minutes as &dyn rusqlite::ToSql,
+                        &conflict_note.server_ver as &dyn rusqlite::ToSql,
+                        &conflict_note.last_synced_at as &dyn rusqlite::ToSql,
+                    ],
+                ).map_err(|e| AppError::DatabaseError(format!("Failed to create conflict copy: {}", e)))?;
+
+                log::warn!("Created conflict copy for note {} as {}", conflict.id, conflict_note.id);
+            }
+            "folder" => {
+                // 文件夹冲突：创建冲突副本文件夹
+                let original_folder = self.get_folder_by_id(&conflict.id)?
+                    .ok_or(AppError::NotFound(format!("Folder {} not found", conflict.id)))?;
+
+                let conflict_folder = Folder {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    name: format!("{} (冲突副本)", original_folder.name),
+                    parent_id: original_folder.parent_id.clone(),
+                    icon: original_folder.icon.clone(),
+                    color: original_folder.color.clone(),
+                    sort_order: original_folder.sort_order,
+                    created_at: original_folder.created_at,
+                    updated_at: original_folder.updated_at,
+                    server_ver: original_folder.server_ver,
+                    is_dirty: true,
+                    last_synced_at: None,
+                };
+
+                let conn = self.pool.get()
+                    .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+                conn.execute(
+                    "INSERT INTO folders
+                     (id, name, parent_id, icon, color, sort_order,
+                      created_at, updated_at, server_ver, is_dirty, last_synced_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10)",
+                    (
+                        &conflict_folder.id, &conflict_folder.name, &conflict_folder.parent_id,
+                        &conflict_folder.icon, &conflict_folder.color, conflict_folder.sort_order,
+                        conflict_folder.created_at, conflict_folder.updated_at,
+                        conflict_folder.server_ver, conflict_folder.last_synced_at,
+                    ),
+                ).map_err(|e| AppError::DatabaseError(format!("Failed to create conflict folder: {}", e)))?;
+
+                log::warn!("Created conflict copy for folder {} as {}", conflict.id, conflict_folder.id);
+            }
+            "tag" => {
+                // 标签冲突：创建冲突副本标签
+                let original_tag = self.get_tag_by_id(&conflict.id)?
+                    .ok_or(AppError::NotFound(format!("Tag {} not found", conflict.id)))?;
+
+                let conflict_tag = Tag {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    name: format!("{} (冲突副本)", original_tag.name),
+                    color: original_tag.color.clone(),
+                    created_at: original_tag.created_at,
+                    updated_at: original_tag.updated_at,
+                    server_ver: original_tag.server_ver,
+                    is_dirty: true,
+                    last_synced_at: None,
+                };
+
+                let conn = self.pool.get()
+                    .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+                conn.execute(
+                    "INSERT INTO tags
+                     (id, name, color, created_at, updated_at, server_ver, is_dirty, last_synced_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7)",
+                    (
+                        &conflict_tag.id, &conflict_tag.name, &conflict_tag.color,
+                        conflict_tag.created_at, conflict_tag.updated_at,
+                        conflict_tag.server_ver, conflict_tag.last_synced_at,
+                    ),
+                ).map_err(|e| AppError::DatabaseError(format!("Failed to create conflict tag: {}", e)))?;
+
+                log::warn!("Created conflict copy for tag {} as {}", conflict.id, conflict_tag.id);
+            }
+            "snapshot" => {
+                // 快照冲突：创建冲突副本快照
+                let original_snapshot = self.get_snapshot_by_id(&conflict.id)?
+                    .ok_or(AppError::NotFound(format!("Snapshot {} not found", conflict.id)))?;
+
+                let conflict_snapshot = NoteSnapshot {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    note_id: original_snapshot.note_id.clone(),
+                    title: format!("{} (冲突副本)", original_snapshot.title),
+                    content: original_snapshot.content.clone(),
+                    snapshot_name: Some(format!("{} (冲突副本)", 
+                        original_snapshot.snapshot_name.unwrap_or_else(|| "快照".to_string()))),
+                    created_at: original_snapshot.created_at,
+                    server_ver: original_snapshot.server_ver,
+                    is_dirty: true,
+                    last_synced_at: None,
+                };
+
+                let conn = self.pool.get()
+                    .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+                conn.execute(
+                    "INSERT INTO note_snapshots
+                     (id, note_id, title, content, snapshot_name,
+                      created_at, server_ver, is_dirty, last_synced_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8)",
+                    (
+                        &conflict_snapshot.id, &conflict_snapshot.note_id, &conflict_snapshot.title,
+                        &conflict_snapshot.content, &conflict_snapshot.snapshot_name,
+                        conflict_snapshot.created_at, conflict_snapshot.server_ver,
+                        conflict_snapshot.last_synced_at,
+                    ),
+                ).map_err(|e| AppError::DatabaseError(format!("Failed to create conflict snapshot: {}", e)))?;
+
+                log::warn!("Created conflict copy for snapshot {} as {}", conflict.id, conflict_snapshot.id);
+            }
+            _ => {
+                log::warn!("Unknown conflict type: {} for id {}", conflict.entity_type, conflict.id);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 获取笔记（可能返回 None）
+    fn get_note_by_id(&self, id: &str) -> Result<Option<Note>> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT id, title, content, excerpt, markdown_cache, folder_id,
+                    is_favorite, is_deleted, is_pinned, author,
+                    created_at, updated_at, deleted_at, word_count, read_time_minutes,
+                    server_ver, is_dirty, last_synced_at
+             FROM notes
+             WHERE id = ?1"
+        ).map_err(|e| AppError::DatabaseError(format!("Failed to get note: {}", e)))?;
+
+        match stmt.query_row([id], |row| {
+            Ok(Note {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                content: row.get(2)?,
+                excerpt: row.get(3)?,
+                markdown_cache: row.get(4)?,
+                folder_id: row.get(5)?,
+                is_favorite: row.get(6)?,
+                is_deleted: row.get(7)?,
+                is_pinned: row.get(8)?,
+                author: row.get(9)?,
+                created_at: row.get(10)?,
+                updated_at: row.get(11)?,
+                deleted_at: row.get(12)?,
+                word_count: row.get(13)?,
+                read_time_minutes: row.get(14)?,
+                server_ver: row.get(15)?,
+                is_dirty: row.get(16)?,
+                last_synced_at: row.get(17)?,
+            })
+        }) {
+            Ok(note) => Ok(Some(note)),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// 获取文件夹（可能返回 None）
+    fn get_folder_by_id(&self, id: &str) -> Result<Option<Folder>> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT id, name, parent_id, icon, color, sort_order,
+                    created_at, updated_at,
+                    server_ver, is_dirty, last_synced_at
+             FROM folders
+             WHERE id = ?1"
+        ).map_err(|e| AppError::DatabaseError(format!("Failed to get folder: {}", e)))?;
+
+        match stmt.query_row([id], |row| {
+            Ok(Folder {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                parent_id: row.get(2)?,
+                icon: row.get(3)?,
+                color: row.get(4)?,
+                sort_order: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+                server_ver: row.get(8)?,
+                is_dirty: row.get(9)?,
+                last_synced_at: row.get(10)?,
+            })
+        }) {
+            Ok(folder) => Ok(Some(folder)),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// 获取标签（可能返回 None）
+    fn get_tag_by_id(&self, id: &str) -> Result<Option<Tag>> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT id, name, color, created_at, updated_at, server_ver, is_dirty, last_synced_at
+             FROM tags
+             WHERE id = ?1"
+        ).map_err(|e| AppError::DatabaseError(format!("Failed to get tag: {}", e)))?;
+
+        match stmt.query_row([id], |row| {
+            Ok(Tag {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                color: row.get(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+                server_ver: row.get(5)?,
+                is_dirty: row.get(6)?,
+                last_synced_at: row.get(7)?,
+            })
+        }) {
+            Ok(tag) => Ok(Some(tag)),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// 获取快照（可能返回 None）
+    fn get_snapshot_by_id(&self, id: &str) -> Result<Option<NoteSnapshot>> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT id, note_id, title, content, snapshot_name,
+                    created_at, server_ver, is_dirty, last_synced_at
+             FROM note_snapshots
+             WHERE id = ?1"
+        ).map_err(|e| AppError::DatabaseError(format!("Failed to get snapshot: {}", e)))?;
+
+        match stmt.query_row([id], |row| {
+            Ok(NoteSnapshot {
+                id: row.get(0)?,
+                note_id: row.get(1)?,
+                title: row.get(2)?,
+                content: row.get(3)?,
+                snapshot_name: row.get(4)?,
+                created_at: row.get(5)?,
+                server_ver: row.get(6)?,
+                is_dirty: row.get(7)?,
+                last_synced_at: row.get(8)?,
+            })
+        }) {
+            Ok(snapshot) => Ok(Some(snapshot)),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// 获取上次同步时间
+    pub fn get_last_sync_at(&self) -> Result<Option<i64>> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        let mut stmt = conn.prepare("SELECT last_sync_at FROM sync_state WHERE id = 1")?;
+
+        match stmt.query_row([], |row| row.get(0)) {
+            Ok(timestamp) => Ok(Some(timestamp)),
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// 更新同步状态
+    pub fn update_sync_state(&self, last_sync_at: i64, conflict_count: i32) -> Result<()> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        let pending_count = self.count_pending()?;
+
+        conn.execute(
+            "INSERT OR REPLACE INTO sync_state (id, last_sync_at, pending_count, conflict_count)
+             VALUES (1, ?1, ?2, ?3)",
+            (last_sync_at, pending_count, conflict_count),
+        ).map_err(|e| AppError::DatabaseError(format!("更新同步状态失败: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// 统计待同步数量（优化：使用单次查询）
+    fn count_pending(&self) -> Result<i32> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
+
+        let total: i32 = conn.query_row(
+            "SELECT 
+                (SELECT COUNT(*) FROM notes WHERE is_dirty = 1) +
+                (SELECT COUNT(*) FROM folders WHERE is_dirty = 1) +
+                (SELECT COUNT(*) FROM tags WHERE is_dirty = 1) +
+                (SELECT COUNT(*) FROM note_snapshots WHERE is_dirty = 1) as total",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(0);
+
+        Ok(total)
+    }
+}

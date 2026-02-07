@@ -1,22 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-
-export interface AppSettings {
-  id: number
-  default_server_url: string
-  auto_sync_enabled: boolean
-  sync_interval_minutes: number
-  theme: 'system' | 'light' | 'dark'
-  language: string
-  updated_at: number
-}
-
-export interface UpdateAppSettings {
-  default_server_url?: string
-  auto_sync_enabled?: boolean
-  sync_interval_minutes?: number
-  theme?: string
-  language?: string
-}
+import type { AppSettings, UpdateAppSettings } from '@/types/appSettings'
 
 /**
  * 获取应用设置

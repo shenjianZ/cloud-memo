@@ -39,6 +39,7 @@ aes-gcm = "0.10"
 base64 = "0.21"
 pbkdf2 = "0.12"
 sha2 = "0.10"
+tokio = { version = "1", features = ["sync", "time", "rt-multi-thread"] }
 
 [features]
 # 开发模式特性（用于启用 devtools）

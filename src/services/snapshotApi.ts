@@ -1,29 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-
-export interface CreateSnapshotRequest {
-  note_id: string
-  title: string
-  content: string
-  snapshot_name?: string
-}
-
-export interface NoteSnapshot {
-  id: string
-  note_id: string
-  title: string
-  content: string
-  snapshot_name?: string
-  created_at: number
-}
-
-export interface SnapshotListItem {
-  id: string
-  note_id: string
-  title: string
-  snapshot_name?: string
-  created_at: number
-  created_at_display: string
-}
+import type { CreateSnapshotRequest, NoteSnapshot, SnapshotListItem } from '@/types/snapshot'
 
 /**
  * 创建快照

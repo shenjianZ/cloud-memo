@@ -1,7 +1,8 @@
 use crate::models::{Tag, CreateTagRequest, UpdateTagRequest, NoteTagRequest, error::{Result, AppError}};
 use crate::database::DbPool;
-use r2d2_sqlite::rusqlite::{self as rusqlite, Row, params};
+use r2d2_sqlite::rusqlite::{self as rusqlite, params};
 
+#[derive(Clone)]
 pub struct TagRepository {
     pool: DbPool,
 }
@@ -15,18 +16,24 @@ impl TagRepository {
     pub fn find_all(&self) -> Result<Vec<Tag>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT id, name, color, created_at, updated_at
+            "SELECT id, name, color, created_at, updated_at, is_deleted, deleted_at, server_ver, is_dirty, last_synced_at
              FROM tags
+             WHERE is_deleted = 0
              ORDER BY name"
         )?;
 
-        let tags = stmt.query_map([], |row: &Row| {
+        let tags = stmt.query_map([], |row| {
             Ok(Tag {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 color: row.get(2)?,
                 created_at: row.get(3)?,
                 updated_at: row.get(4)?,
+                is_deleted: row.get(5)?,
+                deleted_at: row.get(6)?,
+                server_ver: row.get(7)?,
+                is_dirty: row.get(8)?,
+                last_synced_at: row.get(9)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -38,17 +45,22 @@ impl TagRepository {
     pub fn find_by_id(&self, id: &str) -> Result<Option<Tag>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT id, name, color, created_at, updated_at
-             FROM tags WHERE id = ?1"
+            "SELECT id, name, color, created_at, updated_at, is_deleted, deleted_at, server_ver, is_dirty, last_synced_at
+             FROM tags WHERE id = ?1 AND is_deleted = 0"
         )?;
 
-        let result = stmt.query_row(params![id], |row: &Row| {
+        let result = stmt.query_row(params![id], |row| {
             Ok(Tag {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 color: row.get(2)?,
                 created_at: row.get(3)?,
                 updated_at: row.get(4)?,
+                is_deleted: row.get(5)?,
+                deleted_at: row.get(6)?,
+                server_ver: row.get(7)?,
+                is_dirty: row.get(8)?,
+                last_synced_at: row.get(9)?,
             })
         });
 
@@ -63,25 +75,54 @@ impl TagRepository {
     pub fn find_by_note_id(&self, note_id: &str) -> Result<Vec<Tag>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT t.id, t.name, t.color, t.created_at, t.updated_at
+            "SELECT t.id, t.name, t.color, t.created_at, t.updated_at, t.is_deleted, t.deleted_at, t.server_ver, t.is_dirty, t.last_synced_at
              FROM tags t
-             INNER JOIN note_tags nt ON t.id = nt.tag_id
-             WHERE nt.note_id = ?1
+             INNER JOIN note_tags nt ON t.id = nt.tag_id AND nt.is_deleted = 0
+             WHERE nt.note_id = ?1 AND t.is_deleted = 0
              ORDER BY t.name"
         )?;
 
-        let tags = stmt.query_map(params![note_id], |row: &Row| {
+        let tags = stmt.query_map(params![note_id], |row| {
             Ok(Tag {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 color: row.get(2)?,
                 created_at: row.get(3)?,
                 updated_at: row.get(4)?,
+                is_deleted: row.get(5)?,
+                deleted_at: row.get(6)?,
+                server_ver: row.get(7)?,
+                is_dirty: row.get(8)?,
+                last_synced_at: row.get(9)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(tags)
+    }
+
+    /// 获取笔记的标签关联（包含真实的 created_at）
+    pub fn find_note_tag_relations(&self, note_id: &str) -> Result<Vec<crate::models::sync::NoteTagRelation>> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT note_id, tag_id, created_at
+             FROM note_tags
+             WHERE note_id = ?1 AND is_deleted = 0"
+        )?;
+
+        let relations = stmt.query_map(params![note_id], |row| {
+            Ok(crate::models::sync::NoteTagRelation {
+                note_id: row.get(0)?,
+                tag_id: row.get(1)?,
+                user_id: String::new(),
+                created_at: row.get(2)?,
+                is_deleted: false,
+                deleted_at: None,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(relations)
     }
 
     /// 创建标签
@@ -91,8 +132,8 @@ impl TagRepository {
 
         let conn = self.pool.get()?;
         conn.execute(
-            "INSERT INTO tags (id, name, color, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO tags (id, name, color, created_at, updated_at, is_deleted, deleted_at, server_ver, is_dirty, last_synced_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 0, NULL, 1, 1, NULL)",
             params![&id, &req.name, &req.color, now, now],
         )?;
 
@@ -102,6 +143,11 @@ impl TagRepository {
             color: req.color.clone(),
             created_at: now,
             updated_at: now,
+            is_deleted: false,
+            deleted_at: None,
+            server_ver: 1,
+            is_dirty: true,
+            last_synced_at: None,
         })
     }
 
@@ -116,21 +162,42 @@ impl TagRepository {
             color: req.color.clone().or(current.color),
             created_at: current.created_at,
             updated_at: chrono::Utc::now().timestamp(),
+            is_deleted: current.is_deleted,
+            deleted_at: current.deleted_at,
+            server_ver: current.server_ver,
+            is_dirty: true,  // 更新后标记为脏
+            last_synced_at: current.last_synced_at,
         };
 
         let conn = self.pool.get()?;
         conn.execute(
-            "UPDATE tags SET name = ?1, color = ?2, updated_at = ?3 WHERE id = ?4",
+            "UPDATE tags SET name = ?1, color = ?2, updated_at = ?3, is_dirty = 1 WHERE id = ?4",
             params![&updated.name, &updated.color, updated.updated_at, id],
         )?;
 
         Ok(updated)
     }
 
-    /// 删除标签
+    /// 删除标签（软删除）
+    ///
+    /// 利用外键约束自动处理：
+    /// - note_tags 表中的关联记录会被标记为已删除
     pub fn delete(&self, id: &str) -> Result<()> {
         let conn = self.pool.get()?;
-        conn.execute("DELETE FROM tags WHERE id = ?1", params![id])?;
+        let now = chrono::Utc::now().timestamp();
+
+        // 软删除标签
+        conn.execute(
+            "UPDATE tags SET is_deleted = 1, deleted_at = ?, is_dirty = 1 WHERE id = ?",
+            params![now, id],
+        )?;
+
+        // 同时软删除所有关联的 note_tags
+        conn.execute(
+            "UPDATE note_tags SET is_deleted = 1, deleted_at = ? WHERE tag_id = ?",
+            params![now, id],
+        )?;
+
         Ok(())
     }
 

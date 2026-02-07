@@ -12,6 +12,27 @@ interface NoteMetaProps {
   className?: string
 }
 
+// 安全地格式化日期距离
+function safeFormatDistanceToNow(timestamp: number | null | undefined): string {
+  // 检查时间戳是否有效
+  if (!timestamp || timestamp <= 0 || !Number.isFinite(timestamp)) {
+    return '未知时间'
+  }
+
+  try {
+    const date = new Date(timestamp)
+    // 检查日期是否有效（检查年份是否在合理范围内）
+    const year = date.getFullYear()
+    if (year < 2000 || year > 2100) {
+      return '未知时间'
+    }
+
+    return formatDistanceToNow(date, { addSuffix: true, locale: zhCN })
+  } catch {
+    return '未知时间'
+  }
+}
+
 export function NoteMeta({ createdAt, updatedAt, author, tags = [], className }: NoteMetaProps) {
   const { tags: allTags } = useTagStore()
   const noteTags = allTags.filter(tag => tags.includes(tag.id))
@@ -29,12 +50,12 @@ export function NoteMeta({ createdAt, updatedAt, author, tags = [], className }:
 
         <div className="flex items-center gap-1.5">
           <Calendar className="w-3 h-3" />
-          <span>创建于 {formatDistanceToNow(new Date(createdAt), { addSuffix: true, locale: zhCN })}</span>
+          <span>创建于 {safeFormatDistanceToNow(createdAt)}</span>
         </div>
 
         <div className="flex items-center gap-1.5">
           <Edit className="w-3 h-3" />
-          <span>更新于 {formatDistanceToNow(new Date(updatedAt), { addSuffix: true, locale: zhCN })}</span>
+          <span>更新于 {safeFormatDistanceToNow(updatedAt)}</span>
         </div>
       </div>
 

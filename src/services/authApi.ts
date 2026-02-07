@@ -74,5 +74,12 @@ export async function removeAccount(userId: string): Promise<void> {
  * 刷新 access_token（使用 refresh_token）
  */
 export async function refreshAccessToken(): Promise<AuthResponse> {
-    return await invoke("refresh_access_token");
+    return await invoke<AuthResponse>("refresh_access_token");
+}
+
+/**
+ * 删除账号（需要密码验证）
+ */
+export async function deleteAccount(password: string): Promise<void> {
+    await invoke("delete_account", { password });
 }

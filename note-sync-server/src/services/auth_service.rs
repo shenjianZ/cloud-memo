@@ -2,14 +2,13 @@ use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
-use jsonwebtoken::{encode, EncodingKey, Header};
 use chrono::{Utc, Duration};
 use anyhow::Result;
-use sqlx::{MySqlPool};
-use sha2::{Sha256, Digest};
-use base64::{Engine as _, engine::general_purpose};
+use sqlx::MySqlPool;
+use rand::Rng;
 
 use crate::models::User;
+use super::token_service::TokenService;
 
 pub struct AuthService {
     pool: MySqlPool,
@@ -20,7 +19,102 @@ impl AuthService {
         Self { pool }
     }
 
-    pub async fn register(&self, email: &str, password: &str) -> Result<User> {
+    /// 检查邮箱是否已存在
+    pub async fn check_email_exists(&self, email: &str) -> Result<bool> {
+        let existing = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM users WHERE email = ?"
+        )
+        .bind(email)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(existing > 0)
+    }
+
+    /// 哈希密码（同步操作）
+    pub fn hash_password(&self, password: &str) -> Result<String> {
+        let salt = SaltString::generate(&mut OsRng);
+        let argon2 = Argon2::default();
+        let password_hash = argon2.hash_password(password.as_bytes(), &salt)
+            .map_err(|e| anyhow::anyhow!("密码哈希失败: {}", e))?
+            .to_string();
+        Ok(password_hash)
+    }
+
+    /// 生成用户 ID（同步操作，不保证唯一性）
+    pub fn generate_user_id(&self) -> String {
+        let mut rng = rand::thread_rng();
+        rng.gen_range(1_000_000_000i64..10_000_000_000i64).to_string()
+    }
+
+    /// 生成唯一的用户 ID（确保数据库中不存在）
+    pub async fn generate_unique_user_id(&self) -> Result<String> {
+        let mut attempts = 0;
+        const MAX_ATTEMPTS: u32 = 10;
+
+        loop {
+            // 生成候选 ID
+            let candidate_id = self.generate_user_id();
+
+            // 检查是否已存在
+            let existing = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM users WHERE id = ?"
+            )
+            .bind(&candidate_id)
+            .fetch_one(&self.pool)
+            .await?;
+
+            if existing == 0 {
+                // ID 不存在，可以使用
+                return Ok(candidate_id);
+            }
+
+            // ID 已存在，重试
+            attempts += 1;
+            if attempts >= MAX_ATTEMPTS {
+                return Err(anyhow::anyhow!("生成唯一用户 ID 失败：已达到最大重试次数"));
+            }
+        }
+    }
+
+    /// 创建用户（返回用户 ID）
+    pub async fn create_user(&self, email: &str, password_hash: &str, user_id: &str) -> Result<i64> {
+        let now = Utc::now().timestamp();
+
+        sqlx::query(
+            "INSERT INTO users (id, email, password_hash, created_at)
+             VALUES (?, ?, ?, ?)"
+        )
+        .bind(user_id)
+        .bind(email)
+        .bind(password_hash)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(now)
+    }
+
+    /// 完成注册后的 token 生成
+    pub async fn complete_registration(&self, user_id: &str, email: &str, created_at: i64, device_id: Option<String>) -> Result<(User, String, String)> {
+        // 生成 token
+        let config = crate::config::AppConfig::load()?;
+        let (access_token, refresh_token) = TokenService::generate_token_pair(user_id, config.auth.jwt_expiration_days, &config.auth.jwt_secret)?;
+
+        // 保存 refresh_token 到数据库
+        self.save_refresh_token(user_id, &refresh_token, device_id.unwrap_or_else(|| "default".to_string())).await?;
+
+        let user = User {
+            id: user_id.to_string(),
+            email: email.to_string(),
+            created_at,
+        };
+
+        Ok((user, access_token, refresh_token))
+    }
+
+    /// 注册用户并返回用户信息和 token
+    pub async fn register(&self, email: &str, password: &str, device_id: Option<String>) -> Result<(User, String, String)> {
         // 1. 检查邮箱是否已存在
         let existing = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM users WHERE email = ?"
@@ -33,15 +127,16 @@ impl AuthService {
             return Err(anyhow::anyhow!("邮箱已注册"));
         }
 
-        // 2. 使用 Argon2 哈希密码（推荐，比 bcrypt 更安全）
+        // 2. 哈希密码（同步操作）
         let salt = SaltString::generate(&mut OsRng);
         let argon2 = Argon2::default();
         let password_hash = argon2.hash_password(password.as_bytes(), &salt)
             .map_err(|e| anyhow::anyhow!("密码哈希失败: {}", e))?
             .to_string();
 
-        // 3. 创建用户
-        let user_id = uuid::Uuid::new_v4().to_string();
+        // 3. 生成用户 ID（同步操作）
+        let mut rng = rand::thread_rng();
+        let user_id = rng.gen_range(1_000_000_000i64..10_000_000_000i64).to_string();
         let now = Utc::now().timestamp();
 
         // 4. 插入数据库
@@ -56,11 +151,19 @@ impl AuthService {
         .execute(&self.pool)
         .await?;
 
-        Ok(User {
-            id: user_id,
+        // 5. 创建 User 对象
+        let user = User {
+            id: user_id.clone(),
             email: email.to_string(),
             created_at: now,
-        })
+        };
+
+        // 6. 生成并保存 token
+        let config = crate::config::AppConfig::load()?;
+        let (access_token, refresh_token) = TokenService::generate_token_pair(&user_id, config.auth.jwt_expiration_days, &config.auth.jwt_secret)?;
+        self.save_refresh_token(&user_id, &refresh_token, device_id.unwrap_or_else(|| "default".to_string())).await?;
+
+        Ok((user, access_token, refresh_token))
     }
 
     pub async fn login(&self, email: &str, password: &str, device_id: Option<String>) -> Result<(User, String, String)> {
@@ -73,7 +176,7 @@ impl AuthService {
         .await?
         .ok_or_else(|| anyhow::anyhow!("邮箱或密码错误"))?;
 
-        // 2. 验证密码（使用 Argon2）
+        // 2. 验证密码
         let password_hash: String = sqlx::query_scalar(
             "SELECT password_hash FROM users WHERE email = ?"
         )
@@ -88,40 +191,20 @@ impl AuthService {
         argon2.verify_password(password.as_bytes(), &parsed_hash)
             .map_err(|_| anyhow::anyhow!("邮箱或密码错误"))?;
 
-        // 3. 生成 JWT access_token（短期，7天）
+        // 3. 生成 token
         let config = crate::config::AppConfig::load()?;
-        let expiration = Utc::now()
-            .checked_add_signed(Duration::days(config.auth.jwt_expiration_days))
-            .expect("valid timestamp")
-            .timestamp() as usize;
+        let (access_token, refresh_token) = TokenService::generate_token_pair(&user.id, config.auth.jwt_expiration_days, &config.auth.jwt_secret)?;
 
-        let claims = serde_json::json!({
-            "sub": user.id.clone(),
-            "exp": expiration,
-        });
-
-        let jwt_secret = config.auth.jwt_secret;
-        let access_token = encode(
-            &Header::default(),
-            &claims,
-            &EncodingKey::from_secret(jwt_secret.as_ref()),
-        )?;
-
-        // 4. 生成 refresh_token（长期，30天）
-        let refresh_token = self.generate_refresh_token(&user.id, device_id.unwrap_or_else(|| "default".to_string())).await?;
+        // 4. 保存 refresh_token 到数据库
+        self.save_refresh_token(&user.id, &refresh_token, device_id.unwrap_or_else(|| "default".to_string())).await?;
 
         Ok((user, access_token, refresh_token))
     }
 
-    /// 生成 refresh_token 并存储到数据库
-    async fn generate_refresh_token(&self, user_id: &str, device_id: String) -> Result<String> {
-        // 生成随机 refresh_token
-        let refresh_token = uuid::Uuid::new_v4().to_string();
-
-        // 计算哈希存储（SHA256 + base64）
-        let mut hasher = Sha256::new();
-        hasher.update(refresh_token.as_bytes());
-        let token_hash = general_purpose::STANDARD.encode(hasher.finalize());
+    /// 保存 refresh_token 到数据库
+    async fn save_refresh_token(&self, user_id: &str, refresh_token: &str, device_id: String) -> Result<()> {
+        // 计算 refresh_token 的哈希
+        let token_hash = TokenService::hash_token(refresh_token);
 
         // 设置过期时间（30天）
         let expires_at = Utc::now()
@@ -155,15 +238,13 @@ impl AuthService {
         .execute(&self.pool)
         .await?;
 
-        Ok(refresh_token)
+        Ok(())
     }
 
     /// 使用 refresh_token 刷新 access_token
     pub async fn refresh_access_token(&self, refresh_token: &str, device_id: String) -> Result<(String, String)> {
         // 1. 计算 refresh_token 的哈希
-        let mut hasher = Sha256::new();
-        hasher.update(refresh_token.as_bytes());
-        let token_hash = general_purpose::STANDARD.encode(hasher.finalize());
+        let token_hash = TokenService::hash_token(refresh_token);
 
         // 2. 查询 refresh_token 记录
         let (user_id, expires_at): (String, i64) = sqlx::query_as(
@@ -195,28 +276,40 @@ impl AuthService {
         .await?
         .ok_or_else(|| anyhow::anyhow!("用户不存在"))?;
 
-        // 5. 生成新的 access_token
+        // 5. 生成新的 token
         let config = crate::config::AppConfig::load()?;
-        let expiration = Utc::now()
-            .checked_add_signed(Duration::days(config.auth.jwt_expiration_days))
-            .expect("valid timestamp")
-            .timestamp() as usize;
+        let (access_token, new_refresh_token) = TokenService::generate_token_pair(&user.id, config.auth.jwt_expiration_days, &config.auth.jwt_secret)?;
 
-        let claims = serde_json::json!({
-            "sub": user.id,
-            "exp": expiration,
-        });
-
-        let jwt_secret = config.auth.jwt_secret;
-        let access_token = encode(
-            &Header::default(),
-            &claims,
-            &EncodingKey::from_secret(jwt_secret.as_ref()),
-        )?;
-
-        // 6. 生成新的 refresh_token（轮换策略）
-        let new_refresh_token = self.generate_refresh_token(&user_id, device_id).await?;
+        // 6. 保存新的 refresh_token（轮换策略）
+        self.save_refresh_token(&user_id, &new_refresh_token, device_id).await?;
 
         Ok((access_token, new_refresh_token))
+    }
+
+    /// 删除用户账号（级联删除所有相关数据）
+    pub async fn delete_user(&self, user_id: &str, password: &str) -> Result<()> {
+        // 1. 验证密码
+        let password_hash: String = sqlx::query_scalar(
+            "SELECT password_hash FROM users WHERE id = ?"
+        )
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("用户不存在"))?;
+
+        let parsed_hash = PasswordHash::new(&password_hash)
+            .map_err(|e| anyhow::anyhow!("解析密码哈希失败: {}", e))?;
+        let argon2 = Argon2::default();
+
+        argon2.verify_password(password.as_bytes(), &parsed_hash)
+            .map_err(|_| anyhow::anyhow!("密码错误"))?;
+
+        // 2. 删除用户（外键会级联删除所有相关数据）
+        sqlx::query("DELETE FROM users WHERE id = ?")
+            .bind(user_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
     }
 }

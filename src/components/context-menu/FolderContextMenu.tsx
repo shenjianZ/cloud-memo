@@ -1,8 +1,10 @@
-import { FileEdit, FolderPlus, Palette, Copy, Trash2, FolderOpen } from 'lucide-react'
+import { FileEdit, FolderPlus, Palette, Copy, Trash2, FolderOpen, Cloud } from 'lucide-react'
 import { ContextMenu, MenuItem, MenuSeparator } from './ContextMenu'
 import { useNoteStore } from '@/store/noteStore'
+import { useSyncStore } from '@/store/syncStore'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
+import { useAuthStore } from '@/store/authStore'
 
 interface FolderContextMenuProps {
   position: { x: number; y: number }
@@ -22,6 +24,8 @@ export function FolderContextMenu({
 }: FolderContextMenuProps) {
   const { folders, createNote, createFolder, deleteFolder, updateFolder } = useNoteStore()
   const navigate = useNavigate()
+  const { isAuthenticated } = useAuthStore()
+  const { syncSingleFolder } = useSyncStore()
 
   const folder = folders.find((f) => f.id === folderId)
 
@@ -160,6 +164,30 @@ export function FolderContextMenu({
     onClose()
   }
 
+  const handleSyncToCloud = async () => {
+    if (!folder) return
+
+    // 检查是否已登录
+    if (!isAuthenticated) {
+      toast.error('请先登录云端账户')
+      return
+    }
+
+    const toastId = toast.loading('正在同步文件夹到云端...', { id: `sync-${folder.id}` })
+
+    try {
+      // 使用 syncStore 的方法（会自动刷新笔记和文件夹列表并显示详细统计）
+      await syncSingleFolder(folder.id)
+      // toast 已由 syncStore 管理，这里只需关闭 loading
+      toast.dismiss(toastId)
+    } catch (error) {
+      console.error('Sync single folder failed:', error)
+      toast.error('同步失败', { id: toastId })
+    } finally {
+      onClose()
+    }
+  }
+
   return (
     <ContextMenu position={position} isVisible={isVisible} onClose={onClose}>
       <MenuItem icon={<FolderOpen className="w-4 h-4" />} label="打开" onClick={handleOpen} />
@@ -178,6 +206,17 @@ export function FolderContextMenu({
       <MenuSeparator />
 
       <MenuItem icon={<Copy className="w-4 h-4" />} label="复制路径" onClick={handleCopyPath} />
+
+      <MenuSeparator />
+
+      {/* 云同步功能（仅登录时显示） */}
+      {isAuthenticated && (
+        <MenuItem
+          icon={<Cloud className="w-4 h-4" />}
+          label="同步到云端"
+          onClick={handleSyncToCloud}
+        />
+      )}
 
       <MenuSeparator />
 

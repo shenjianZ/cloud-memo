@@ -125,12 +125,12 @@ pub async fn restore_note(
 /// ```
 #[tauri::command]
 pub async fn restore_notes(
-    noteIds: Vec<String>,
+    note_ids: Vec<String>,
     service: NoteSvc<'_>,
 ) -> std::result::Result<Vec<Note>, String> {
-    log::info!("[commands/notes.rs::restore_notes] 批量恢复笔记: count={}", noteIds.len());
+    log::info!("[commands/notes.rs::restore_notes] 批量恢复笔记: count={}", note_ids.len());
 
-    service.restore_notes(noteIds)
+    service.restore_notes(note_ids)
         .map_err(|e| {
             log::error!("[commands/notes.rs::restore_notes] 批量恢复失败: {}", e);
             e.to_string()

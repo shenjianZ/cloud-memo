@@ -29,9 +29,9 @@ export function AppSettings() {
 
   useEffect(() => {
     if (settings) {
-      setServerUrl(settings.default_server_url)
-      setAutoSyncEnabled(settings.auto_sync_enabled)
-      setSyncInterval(settings.sync_interval_minutes.toString())
+      setServerUrl(settings.defaultServerUrl)
+      setAutoSyncEnabled(settings.autoSyncEnabled)
+      setSyncInterval(settings.syncIntervalMinutes.toString())
     }
   }, [settings])
 
@@ -39,9 +39,9 @@ export function AppSettings() {
     setIsSaving(true)
     try {
       await updateSettings({
-        default_server_url: serverUrl,
-        auto_sync_enabled: autoSyncEnabled,
-        sync_interval_minutes: parseInt(syncInterval),
+        defaultServerUrl: serverUrl,
+        autoSyncEnabled: autoSyncEnabled,
+        syncIntervalMinutes: parseInt(syncInterval),
       })
       toast.success('设置已保存')
     } catch (error) {
@@ -58,9 +58,9 @@ export function AppSettings() {
       setIsSaving(true)
       try {
         const reset = await resetSettings()
-        setServerUrl(reset.default_server_url)
-        setAutoSyncEnabled(reset.auto_sync_enabled)
-        setSyncInterval(reset.sync_interval_minutes.toString())
+        setServerUrl(reset.defaultServerUrl)
+        setAutoSyncEnabled(reset.autoSyncEnabled)
+        setSyncInterval(reset.syncIntervalMinutes.toString())
         toast.success('设置已重置')
       } catch (error) {
         toast.error('重置设置失败', {

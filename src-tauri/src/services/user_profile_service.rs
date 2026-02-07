@@ -26,7 +26,7 @@ impl UserProfileService {
     pub fn get_profile(&self, user_id: &str) -> Result<UserProfile> {
         self.repo
             .find_by_user_id(user_id)?
-            .ok_or_else(|| AppError::NotFound(format!("UserProfile for user {} not found", user_id)))
+            .ok_or_else(|| AppError::NotFound(format!("用户 {} 的资料未找到", user_id)))
     }
 
     /// 更新当前用户的资料
@@ -86,7 +86,32 @@ impl UserProfileService {
             "bio": profile.bio,
         });
 
-        log::info!("Syncing profile to {}: {}", url, request_body);
+        // 准备日志用的请求数据（截断 avatar_data 以便阅读）
+        let log_body = {
+            let mut body = serde_json::json!({
+                "user_id": profile.user_id,
+                "username": profile.username,
+                "phone": profile.phone,
+                "qq": profile.qq,
+                "wechat": profile.wechat,
+                "avatar_data": profile.avatar_data,
+                "avatar_mime_type": profile.avatar_mime_type,
+                "bio": profile.bio,
+            });
+
+            // 截断 avatar_data 用于日志显示
+            if let Some(avatar) = body.get_mut("avatar_data") {
+                if let Some(data_str) = avatar.as_str() {
+                    if data_str.len() > 30 {
+                        *avatar = serde_json::json!(format!("{}...", &data_str[..30]));
+                    }
+                }
+            }
+
+            body
+        };
+
+        log::info!("Syncing profile to {}: {}", url, log_body);
 
         let response = self.client
             .post(&url)
@@ -96,30 +121,67 @@ impl UserProfileService {
             .send()
             .await
             .map_err(|e| {
-                log::error!("Failed to sync profile: {}", e);
-                AppError::NetworkError(format!("Sync profile failed: {}", e))
+                log::error!("同步资料失败: {}", e);
+                AppError::NetworkError(format!("同步用户资料失败: {}", e))
             })?;
 
         let status = response.status();
 
         // 先尝试解析响应为 JSON
         let response_json: serde_json::Value = response.json().await.map_err(|e| {
-            log::error!("Failed to parse response: {}", e);
-            AppError::NetworkError(format!("Invalid response: {}", e))
+            log::error!("解析响应失败: {}", e);
+            AppError::NetworkError(format!("响应无效: {}", e))
         })?;
 
         if !status.is_success() {
             // 解析错误消息
             let error_msg = response_json["error"]
                 .as_str()
-                .unwrap_or("Unknown error");
-            log::error!("Server returned error {}: {}", status, error_msg);
+                .unwrap_or("未知错误");
+            log::error!("服务器返回错误 {}: {}", status, error_msg);
             return Err(AppError::NetworkError(error_msg.to_string()));
         }
 
-        // 4. 记录响应（服务器返回更新后的资料）
-        log::info!("Profile synced successfully: {:?}", response_json);
+        // 手动解析服务器响应（snake_case）为 UserProfile（camelCase）
+        // 服务器返回：user_id, username, phone, qq, wechat, avatar_data, avatar_mime_type, bio, created_at, updated_at
+        let user_id = response_json["user_id"].as_str()
+            .ok_or_else(|| AppError::NetworkError("响应中缺少 user_id".to_string()))?;
+        let username = response_json["username"].as_str().map(|s| s.to_string());
+        let phone = response_json["phone"].as_str().map(|s| s.to_string());
+        let qq = response_json["qq"].as_str().map(|s| s.to_string());
+        let wechat = response_json["wechat"].as_str().map(|s| s.to_string());
+        let avatar_data = response_json["avatar_data"].as_str().map(|s| s.to_string());
+        let avatar_mime_type = response_json["avatar_mime_type"].as_str().map(|s| s.to_string());
+        let bio = response_json["bio"].as_str().map(|s| s.to_string());
+        let created_at = response_json["created_at"].as_i64()
+            .ok_or_else(|| AppError::NetworkError("响应中 created_at 无效".to_string()))?;
+        let updated_at = response_json["updated_at"].as_i64()
+            .ok_or_else(|| AppError::NetworkError("响应中 updated_at 无效".to_string()))?;
 
-        Ok(profile)
+        // 获取当前本地 profile 的 id
+        let local_profile = self.repo.find_by_user_id(user_id)?;
+        let id = local_profile.and_then(|p| p.id);
+
+        let server_profile = UserProfile {
+            id,
+            user_id: user_id.to_string(),
+            username,
+            phone,
+            qq,
+            wechat,
+            avatar_data,
+            avatar_mime_type,
+            bio,
+            created_at,
+            updated_at,
+        };
+
+        log::info!("Profile synced successfully: user_id={}, username={:?}",
+                 server_profile.user_id, server_profile.username);
+
+        // 更新本地数据库
+        let result = self.repo.update(&server_profile)?;
+
+        Ok(result)
     }
 }

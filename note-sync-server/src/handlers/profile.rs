@@ -1,10 +1,14 @@
-use axum::{Json, extract::{Path, State, Extension}};
-use serde::Deserialize;
-use axum::http::StatusCode;
-use crate::AppState;
-use crate::services::profile_service::{ProfileService, CreateProfileRequest, UpdateProfileRequest, UserProfile};
-use crate::middleware::logging::{RequestId, log_info};
 use super::ErrorResponse;
+use crate::middleware::logging::{log_info, RequestId};
+use crate::services::profile_service::{
+    CreateProfileRequest, ProfileService, UpdateProfileRequest, UserProfile,
+};
+use crate::AppState;
+use axum::{
+    extract::{Extension, Path, State},
+    Json,
+};
+use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct ProfileSyncRequest {
@@ -13,8 +17,8 @@ pub struct ProfileSyncRequest {
     pub phone: Option<String>,
     pub qq: Option<String>,
     pub wechat: Option<String>,
-    pub avatar_data: Option<String>,  // 头像图片数据（Base64 编码）
-    pub avatar_mime_type: Option<String>,  // 头像图片类型
+    pub avatar_data: Option<String>, // 头像图片数据（Base64 编码）
+    pub avatar_mime_type: Option<String>, // 头像图片类型
     pub bio: Option<String>,
 }
 
@@ -53,17 +57,21 @@ pub fn validate_avatar_data(
 
     // 确保两个字段同时存在
     let data = avatar_data.as_ref().ok_or(ValidationError::InvalidBase64)?;
-    let mime_type = avatar_mime_type.as_ref().ok_or(ValidationError::UnsupportedMimeType("未指定".to_string()))?;
+    let mime_type = avatar_mime_type
+        .as_ref()
+        .ok_or(ValidationError::UnsupportedMimeType("未指定".to_string()))?;
 
     // 验证 MIME 类型
     match mime_type.as_str() {
-        "image/jpeg" | "image/png" | "image/gif" | "image/webp" | "image/bmp" | "image/svg+xml" => {},
+        "image/jpeg" | "image/png" | "image/gif" | "image/webp" | "image/bmp" | "image/svg+xml" => {
+        }
         _ => return Err(ValidationError::UnsupportedMimeType(mime_type.clone())),
     }
 
     // 验证 Base64 编码
-    use base64::{Engine as _, engine::general_purpose};
-    let decoded = general_purpose::STANDARD.decode(data)
+    use base64::{engine::general_purpose, Engine as _};
+    let decoded = general_purpose::STANDARD
+        .decode(data)
         .map_err(|_| ValidationError::InvalidBase64)?;
 
     // 验证图片大小（最大 5MB）
@@ -102,7 +110,12 @@ fn validate_image_magic_bytes(data: &[u8], mime_type: &str) -> Result<(), Valida
         }
         "image/gif" => {
             // GIF: 47 49 46 38 (GIF8)
-            if data.len() < 4 || data[0] != 0x47 || data[1] != 0x49 || data[2] != 0x46 || data[3] != 0x38 {
+            if data.len() < 4
+                || data[0] != 0x47
+                || data[1] != 0x49
+                || data[2] != 0x46
+                || data[3] != 0x38
+            {
                 return Err(ValidationError::InvalidImageFormat);
             }
         }
@@ -179,7 +192,11 @@ pub async fn update_profile(
     Path(user_id): Path<String>,
     Json(req): Json<UpdateProfileRequest>,
 ) -> Result<Json<UserProfile>, ErrorResponse> {
-    log_info(&request_id, "更新用户资料请求", &format!("user_id={}, update={:?}", user_id, req));
+    log_info(
+        &request_id,
+        "更新用户资料请求",
+        &format!("user_id={}, update={:?}", user_id, req),
+    );
 
     let service = ProfileService::new(state.pool);
 

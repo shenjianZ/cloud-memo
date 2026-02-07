@@ -32,7 +32,7 @@ impl FolderService {
     /// 根据 ID 获取文件夹
     pub fn get_folder(&self, id: &str) -> Result<Folder> {
         self.repo.find_by_id(id)?
-            .ok_or(AppError::NotFound(format!("Folder {} not found", id)))
+            .ok_or(AppError::NotFound(format!("文件夹 {} 未找到", id)))
     }
 
     /// 更新文件夹
@@ -43,12 +43,12 @@ impl FolderService {
         if let Some(new_parent_id) = &req.parent_id {
             // 如果新父文件夹是自己，不允许
             if new_parent_id == &folder.id {
-                return Err(AppError::InvalidOperation("Cannot set folder as its own parent".to_string()));
+                return Err(AppError::InvalidOperation("无法将文件夹设置为自己的父文件夹".to_string()));
             }
 
             // 检查循环引用
             if self.repo.check_circular_reference(&folder.id, new_parent_id)? {
-                return Err(AppError::InvalidOperation("Moving would create a circular reference".to_string()));
+                return Err(AppError::InvalidOperation("移动会创建循环引用".to_string()));
             }
 
             folder.parent_id = Some(new_parent_id.clone());
@@ -117,7 +117,7 @@ impl FolderService {
         self.get_folder(id)?;
 
         // 物理删除：数据库外键自动级联删除子文件夹，笔记 folder_id 设为 NULL
-        self.repo.hard_delete(id)
+        self.repo.delete(id)
     }
 
     /// 获取所有文件夹

@@ -11,6 +11,7 @@ export interface NoteMetadata {
   folder?: string
   isPinned: boolean
   isFavorite: boolean
+  isDirty?: boolean  // 是否有未同步的更改
 }
 
 /**

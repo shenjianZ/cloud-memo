@@ -1,25 +1,19 @@
 use crate::models::{LoginRequest, RegisterRequest, AuthResponse, User};
 use crate::models::error::{Result, AppError};
-use crate::services::{AppSettingsService, UserProfileService};
+use crate::services::{AppSettingsService, UserProfileService, CryptoService};
 use crate::database::repositories::UserProfileRepository;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use uuid::Uuid;
-use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit, OsRng},
-    Aes256Gcm, Nonce,
-};
-use base64::{Engine as _, engine::general_purpose};
 use reqwest::Client;
 use std::time::Duration;
 use serde_json::json;
-use pbkdf2::pbkdf2_hmac;
-use sha2::Sha256;
 use r2d2_sqlite::rusqlite;
 
 /// 认证服务
 ///
 /// 管理用户登录、注册、token 加密存储
+#[derive(Clone)]
 pub struct AuthService {
     pool: Pool<SqliteConnectionManager>,
     client: Client,
@@ -38,12 +32,18 @@ impl AuthService {
 
     /// 用户登录
     pub async fn login(&self, mut req: LoginRequest) -> Result<AuthResponse> {
-        let device_id = self.get_or_create_device_id()?;
-
         // 如果 server_url 为空，从 app_settings 获取默认值
         if req.server_url.trim().is_empty() {
             let app_settings_service = AppSettingsService::new(self.pool.clone());
             req.server_url = app_settings_service.get_default_server_url()?;
+        }
+
+        // 自动添加 device_id（如果客户端未提供）
+        if req.device_id.is_none() {
+            use crate::services::DeviceIdentifierService;
+            let device_service = DeviceIdentifierService::new(self.pool.clone());
+            req.device_id = Some(device_service.get_or_create_device_id()?);
+            log::info!("[AuthService::login] 自动添加 device_id: {:?}", req.device_id);
         }
 
         let server_url = req.server_url.trim_end_matches('/');
@@ -53,7 +53,8 @@ impl AuthService {
 
         let request_body = json!({
             "email": req.email,
-            "password": req.password
+            "password": req.password,
+            "device_id": req.device_id  // snake_case 发送
         });
 
         let response = self.client
@@ -64,84 +65,66 @@ impl AuthService {
             .await
             .map_err(|e| {
                 log::error!("Failed to send login request: {}", e);
-                AppError::NetworkError(format!("Login request failed: {}", e))
+                AppError::NetworkError(format!("登录请求失败: {}", e))
             })?;
 
         let status = response.status();
 
-        // 先尝试解析响应为 JSON
+        // 先解析响应为 JSON Value（用于错误处理）
         let response_json: serde_json::Value = response.json().await.map_err(|e| {
             log::error!("Failed to parse response: {}", e);
-            AppError::NetworkError(format!("Invalid response: {}", e))
+            AppError::NetworkError(format!("响应无效: {}", e))
         })?;
 
         if !status.is_success() {
             // 解析错误消息
             let error_msg = response_json["error"]
                 .as_str()
-                .unwrap_or("Unknown error");
+                .unwrap_or("未知错误");
             log::error!("Server returned error {}: {}", status, error_msg);
             return Err(AppError::AuthenticationError(error_msg.to_string()));
         }
 
-        // 解析成功响应
+        // 直接反序列化为 AuthResponse（服务器和客户端都使用 snake_case）
+        let auth_response: AuthResponse = serde_json::from_value(response_json)
+            .map_err(|e| {
+                log::error!("Failed to parse auth response: {}", e);
+                AppError::AuthenticationError(format!("认证响应无效: {}", e))
+            })?;
 
-        let token = response_json["token"]
-            .as_str()
-            .ok_or_else(|| AppError::AuthenticationError("Missing token in response".to_string()))?;
-
-        let refresh_token = response_json["refresh_token"]
-            .as_str()
-            .ok_or_else(|| AppError::AuthenticationError("Missing refresh_token in response".to_string()))?;
-
-        let user_id = response_json["user_id"]
-            .as_str()
-            .ok_or_else(|| AppError::AuthenticationError("Missing user_id in response".to_string()))?;
-
-        // 创建 AuthResponse（expires_at 从 JWT token 解析，这里简化处理）
+        // 客户端计算 token 过期时间（7天后）
         let now = chrono::Utc::now().timestamp();
-        let expires_at = now + 7 * 24 * 3600; // 7 天后过期
-
-        let response = AuthResponse {
-            token: token.to_string(),
-            refresh_token: refresh_token.to_string(),
-            user_id: user_id.to_string(),
-            email: req.email.clone(),
-            expires_at: Some(expires_at),
-        };
+        let expires_at = now + 7 * 24 * 3600;
 
         // 加密并存储 token
         self.save_user_auth(
-            &response.user_id,
+            &auth_response.user_id,
             &req.server_url,
             &req.email,
-            &response.token,
-            &response.refresh_token,
+            &auth_response.token,
+            &auth_response.refresh_token,
             expires_at,
-            &device_id,
+            &auth_response.device_id,
         )?;
 
         log::info!("User logged in: {}", req.email);
 
         // 初始化用户资料（如果不存在）
-        log::debug!("[AuthService::login] 初始化用户资料: user_id={}", response.user_id);
+        log::debug!("[AuthService::login] 初始化用户资料: user_id={}", auth_response.user_id);
         let profile_service = UserProfileService::new(
             UserProfileRepository::new(self.pool.clone()),
             self.pool.clone()
         );
-        if let Err(e) = profile_service.init_profile(&response.user_id) {
+        if let Err(e) = profile_service.init_profile(&auth_response.user_id) {
             log::warn!("[AuthService::login] 初始化用户资料失败（非致命错误）: {}", e);
         }
 
-        Ok(response)
+        Ok(auth_response)
     }
 
     /// 用户注册
     pub async fn register(&self, mut req: RegisterRequest) -> Result<AuthResponse> {
         log::info!("[AuthService::register] 开始注册流程: email={}, server_url='{}'", req.email, req.server_url);
-
-        let device_id = self.get_or_create_device_id()?;
-        log::info!("[AuthService::register] 获取到 device_id: {}", device_id);
 
         // 如果 server_url 为空，从 app_settings 获取默认值
         if req.server_url.trim().is_empty() {
@@ -151,6 +134,14 @@ impl AuthService {
             log::info!("[AuthService::register] 从 app_settings 获取到默认服务器: {}", req.server_url);
         }
 
+        // 自动添加 device_id（如果客户端未提供）
+        if req.device_id.is_none() {
+            use crate::services::DeviceIdentifierService;
+            let device_service = DeviceIdentifierService::new(self.pool.clone());
+            req.device_id = Some(device_service.get_or_create_device_id()?);
+            log::info!("[AuthService::register] 自动添加 device_id: {:?}", req.device_id);
+        }
+
         let server_url = req.server_url.trim_end_matches('/');
         let url = format!("{}/auth/register", server_url);
 
@@ -158,7 +149,8 @@ impl AuthService {
 
         let request_body = json!({
             "email": req.email,
-            "password": req.password
+            "password": req.password,
+            "device_id": req.device_id  // snake_case 发送
         });
 
         log::debug!("[AuthService::register] 请求体: {}", request_body);
@@ -171,82 +163,70 @@ impl AuthService {
             .await
             .map_err(|e| {
                 log::error!("[AuthService::register] 发送注册请求失败: {}", e);
-                AppError::NetworkError(format!("Register request failed: {}", e))
+                AppError::NetworkError(format!("注册请求失败: {}", e))
             })?;
 
         log::info!("[AuthService::register] 收到服务器响应，状态码: {}", response.status());
 
         let status = response.status();
 
-        // 先尝试解析响应为 JSON
+        // 先解析响应为 JSON Value（用于错误处理）
         let response_json: serde_json::Value = response.json().await.map_err(|e| {
             log::error!("[AuthService::register] 解析响应失败: {}", e);
-            AppError::NetworkError(format!("Invalid response: {}", e))
+            AppError::NetworkError(format!("响应无效: {}", e))
         })?;
 
         if !status.is_success() {
             // 解析错误消息
             let error_msg = response_json["error"]
                 .as_str()
-                .unwrap_or("Unknown error");
+                .unwrap_or("未知错误");
             log::error!("[AuthService::register] 服务器返回错误 {}: {}", status, error_msg);
             return Err(AppError::AuthenticationError(error_msg.to_string()));
         }
 
         log::info!("[AuthService::register] 服务器响应内容: {}", response_json);
 
-        let token = response_json["token"]
-            .as_str()
-            .ok_or_else(|| AppError::AuthenticationError("Missing token in response".to_string()))?;
+        // 直接反序列化为 AuthResponse（服务器和客户端都使用 snake_case）
+        let auth_response: AuthResponse = serde_json::from_value(response_json)
+            .map_err(|e| {
+                log::error!("Failed to parse auth response: {}", e);
+                AppError::AuthenticationError(format!("认证响应无效: {}", e))
+            })?;
 
-        let refresh_token = response_json["refresh_token"]
-            .as_str()
-            .ok_or_else(|| AppError::AuthenticationError("Missing refresh_token in response".to_string()))?;
+        log::info!("[AuthService::register] 成功提取 auth response: user_id={}, device_id={}",
+                 auth_response.user_id, auth_response.device_id);
 
-        let user_id = response_json["user_id"]
-            .as_str()
-            .ok_or_else(|| AppError::AuthenticationError("Missing user_id in response".to_string()))?;
-
-        log::info!("[AuthService::register] 成功提取 token、refresh_token 和 user_id: user_id={}", user_id);
-
-        // 创建 AuthResponse（expires_at 从 JWT token 解析，这里简化处理）
+        // 客户端计算 token 过期时间（7天后）
         let now = chrono::Utc::now().timestamp();
-        let expires_at = now + 7 * 24 * 3600; // 7 天后过期
-
-        let response = AuthResponse {
-            token: token.to_string(),
-            refresh_token: refresh_token.to_string(),
-            user_id: user_id.to_string(),
-            email: req.email.clone(),
-            expires_at: Some(expires_at),
-        };
+        let expires_at = now + 7 * 24 * 3600;
 
         log::info!("[AuthService::register] 准备加密并存储 token");
 
         // 加密并存储 token
         self.save_user_auth(
-            &response.user_id,
+            &auth_response.user_id,
             &req.server_url,
             &req.email,
-            &response.token,
-            &response.refresh_token,
+            &auth_response.token,
+            &auth_response.refresh_token,
             expires_at,
-            &device_id,
+            &auth_response.device_id,
         )?;
 
-        log::info!("[AuthService::register] 注册成功，user={}, user_id={}", req.email, response.user_id);
+        log::info!("[AuthService::register] 注册成功，user={}, user_id={}", req.email, auth_response.user_id);
 
         // 初始化用户资料
-        log::debug!("[AuthService::register] 初始化用户资料: user_id={}", response.user_id);
+        log::debug!("[AuthService::register] 初始化用户资料: user_id={}", auth_response.user_id);
         let profile_service = UserProfileService::new(
             UserProfileRepository::new(self.pool.clone()),
             self.pool.clone()
         );
-        if let Err(e) = profile_service.init_profile(&response.user_id) {
+        if let Err(e) = profile_service.init_profile(&auth_response.user_id) {
             log::warn!("[AuthService::register] 初始化用户资料失败（非致命错误）: {}", e);
         }
 
-        Ok(response)
+        Ok(auth_response)
     }
 
     /// 用户登出
@@ -259,10 +239,31 @@ impl AuthService {
         conn.execute(
             "DELETE FROM user_auth WHERE is_current = 1",
             [],
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to logout: {}", e)))?;
+        ).map_err(|e| AppError::DatabaseError(format!("登出失败: {}", e)))?;
 
         log::info!("User logged out");
         Ok(())
+    }
+
+    /// 获取当前用户的访问 token
+    fn get_access_token(&self) -> Result<String> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT access_token_encrypted, device_id FROM user_auth WHERE is_current = 1"
+        ).map_err(|e| AppError::DatabaseError(format!("获取访问令牌失败: {}", e)))?;
+
+        let (encrypted_token, device_id): (String, String) = stmt.query_row([], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        }).map_err(|_| AppError::NotAuthenticated("用户未登录".to_string()))?;
+
+        // 使用 device_id 生成加密密钥
+        let key = CryptoService::derive_key_from_device_id(&device_id);
+
+        // 解密 token
+        let token = CryptoService::decrypt_token(&encrypted_token, &key)?;
+        Ok(token)
     }
 
     /// 获取当前登录用户
@@ -277,7 +278,7 @@ impl AuthService {
             "SELECT user_id, server_url, email, device_id, last_sync_at, token_expires_at
              FROM user_auth
              WHERE is_current = 1"
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to get current user: {}", e)))?;
+        ).map_err(|e| AppError::DatabaseError(format!("获取当前用户失败: {}", e)))?;
 
         stmt.query_row([], |row| {
             let expires_at: i64 = row.get(5)?;
@@ -295,7 +296,7 @@ impl AuthService {
                 device_id: row.get(3)?,
                 last_sync_at: row.get(4)?,
             })
-        }).map_err(|_| AppError::NotAuthenticated("No user logged in or token expired".to_string()))
+        }).map_err(|_| AppError::NotAuthenticated("用户未登录或令牌已过期".to_string()))
     }
 
     /// 检查是否已登录
@@ -308,7 +309,7 @@ impl AuthService {
 
         let mut stmt = conn.prepare(
             "SELECT token_expires_at FROM user_auth WHERE is_current = 1"
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to query auth: {}", e)))?;
+        ).map_err(|e| AppError::DatabaseError(format!("查询认证信息失败: {}", e)))?;
 
         let result = stmt.query_row([], |row| {
             let expires_at: i64 = row.get(0)?;
@@ -339,7 +340,7 @@ impl AuthService {
              FROM user_auth ua
              LEFT JOIN user_profiles up ON ua.user_id = up.user_id
              ORDER BY ua.updated_at DESC"
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to list accounts: {}", e)))?;
+        ).map_err(|e| AppError::DatabaseError(format!("列出账号失败: {}", e)))?;
 
         let accounts_iter = stmt.query_map([], |row| {
             // 构建 User 对象
@@ -384,7 +385,7 @@ impl AuthService {
 
         let mut accounts = Vec::new();
         for account in accounts_iter {
-            accounts.push(account.map_err(|e| AppError::DatabaseError(format!("Failed to read account: {}", e)))?);
+            accounts.push(account.map_err(|e| AppError::DatabaseError(format!("读取账号失败: {}", e)))?);
         }
 
         Ok(accounts)
@@ -397,13 +398,13 @@ impl AuthService {
 
         // 开启事务
         let tx = conn.unchecked_transaction()
-            .map_err(|e| AppError::DatabaseError(format!("Failed to begin transaction: {}", e)))?;
+            .map_err(|e| AppError::DatabaseError(format!("开始事务失败: {}", e)))?;
 
         // 将所有账号设为非当前
         tx.execute(
             "UPDATE user_auth SET is_current = 0",
             [],
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to reset current flag: {}", e)))?;
+        ).map_err(|e| AppError::DatabaseError(format!("重置当前标志失败: {}", e)))?;
 
         // 将指定账号设为当前
         let params: &[&dyn rusqlite::ToSql] = &[
@@ -413,14 +414,14 @@ impl AuthService {
         let updated = tx.execute(
             "UPDATE user_auth SET is_current = 1, updated_at = ?1 WHERE user_id = ?2",
             params,
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to set current account: {}", e)))?;
+        ).map_err(|e| AppError::DatabaseError(format!("设置当前账号失败: {}", e)))?;
 
         if updated == 0 {
-            return Err(AppError::NotFound(format!("Account not found: {}", user_id)));
+            return Err(AppError::NotFound(format!("账号不存在: {}", user_id)));
         }
 
         tx.commit()
-            .map_err(|e| AppError::DatabaseError(format!("Failed to commit transaction: {}", e)))?;
+            .map_err(|e| AppError::DatabaseError(format!("提交事务失败: {}", e)))?;
 
         log::info!("Switched to account: {}", user_id);
         Ok(())
@@ -436,16 +437,16 @@ impl AuthService {
             "SELECT is_current FROM user_auth WHERE user_id = ?1",
             [user_id],
             |row| row.get(0)
-        ).map_err(|_| AppError::NotFound(format!("Account not found: {}", user_id)))?;
+        ).map_err(|_| AppError::NotFound(format!("账号不存在: {}", user_id)))?;
 
         if is_current {
-            return Err(AppError::InvalidOperation("Cannot remove current account. Please switch to another account first.".to_string()));
+            return Err(AppError::InvalidOperation("无法移除当前账号。请先切换到另一个账号。".to_string()));
         }
 
         conn.execute(
             "DELETE FROM user_auth WHERE user_id = ?1",
             [user_id],
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to remove account: {}", e)))?;
+        ).map_err(|e| AppError::DatabaseError(format!("移除账号失败: {}", e)))?;
 
         log::info!("Removed account: {}", user_id);
         Ok(())
@@ -459,7 +460,7 @@ impl AuthService {
         let conn = self.pool.get()
             .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
 
-        let (server_url, encrypted_refresh_token, user_id, email, _device_id): (String, String, String, String, String) =
+        let (server_url, encrypted_refresh_token, user_id, email, device_id): (String, String, String, String, String) =
             conn.query_row(
                 "SELECT server_url, refresh_token_encrypted, user_id, email, device_id
                  FROM user_auth
@@ -476,9 +477,9 @@ impl AuthService {
                 },
             ).map_err(|_| AppError::NotAuthenticated("No user logged in".to_string()))?;
 
-        // 2. 解密 refresh_token
-        let key = self.get_encryption_key();
-        let refresh_token = self.decrypt_token(&encrypted_refresh_token)?;
+        // 2. 使用 device_id 解密 refresh_token
+        let key = CryptoService::derive_key_from_device_id(&device_id);
+        let refresh_token = CryptoService::decrypt_token(&encrypted_refresh_token, &key)?;
 
         // 3. 向服务器发起刷新请求
         let url = format!("{}/auth/refresh", server_url.trim_end_matches('/'));
@@ -497,42 +498,49 @@ impl AuthService {
             .await
             .map_err(|e| {
                 log::error!("Failed to send refresh request: {}", e);
-                AppError::NetworkError(format!("Refresh request failed: {}", e))
+                AppError::NetworkError(format!("刷新请求失败: {}", e))
             })?;
 
         let status = response.status();
 
-        // 先尝试解析响应为 JSON
+        // 先解析响应为 JSON Value（用于错误处理）
         let response_json: serde_json::Value = response.json().await.map_err(|e| {
             log::error!("Failed to parse refresh response: {}", e);
-            AppError::NetworkError(format!("Invalid refresh response: {}", e))
+            AppError::NetworkError(format!("刷新响应无效: {}", e))
         })?;
 
         if !status.is_success() {
             // 解析错误消息
             let error_msg = response_json["error"]
                 .as_str()
-                .unwrap_or("Unknown error");
+                .unwrap_or("未知错误");
             log::error!("Server returned error {}: {}", status, error_msg);
             return Err(AppError::AuthenticationError(error_msg.to_string()));
         }
 
-        // 4. 解析服务器响应
+        // 从数据库获取 device_id（用于构建 AuthResponse）
+        let device_id: String = conn.query_row(
+            "SELECT device_id FROM user_auth WHERE user_id = ?1",
+            [&user_id],
+            |row| row.get(0)
+        ).map_err(|e| AppError::DatabaseError(format!("获取 device_id 失败: {}", e)))?;
+
+        // 4. 解析服务器响应（直接读取 token 和 refresh_token）
         let new_access_token = response_json["token"]
             .as_str()
-            .ok_or_else(|| AppError::AuthenticationError("Missing token in refresh response".to_string()))?;
+            .ok_or_else(|| AppError::AuthenticationError("刷新响应中缺少令牌".to_string()))?;
 
         let new_refresh_token = response_json["refresh_token"]
             .as_str()
-            .ok_or_else(|| AppError::AuthenticationError("Missing refresh_token in refresh response".to_string()))?;
+            .ok_or_else(|| AppError::AuthenticationError("刷新响应中缺少 refresh_token".to_string()))?;
 
         // 5. 计算新的过期时间（7天后）
         let now = chrono::Utc::now().timestamp();
         let expires_at = now + 7 * 24 * 3600;
 
         // 6. 更新数据库（加密存储新的 token）
-        let encrypted_access = self.encrypt_token(new_access_token, &key)?;
-        let encrypted_refresh = self.encrypt_token(new_refresh_token, &key)?;
+        let encrypted_access = CryptoService::encrypt_token(new_access_token, &key)?;
+        let encrypted_refresh = CryptoService::encrypt_token(new_refresh_token, &key)?;
 
         conn.execute(
             "UPDATE user_auth
@@ -546,16 +554,17 @@ impl AuthService {
              &expires_at as &dyn r2d2_sqlite::rusqlite::ToSql,
              &now as &dyn r2d2_sqlite::rusqlite::ToSql,
              &user_id as &dyn r2d2_sqlite::rusqlite::ToSql],
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to update tokens: {}", e)))?;
+        ).map_err(|e| AppError::DatabaseError(format!("更新令牌失败: {}", e)))?;
 
         log::info!("Access token refreshed successfully for user: {}", email);
 
+        // 构建完整的 AuthResponse
         Ok(AuthResponse {
             token: new_access_token.to_string(),
             refresh_token: new_refresh_token.to_string(),
             user_id,
             email,
-            expires_at: Some(expires_at),
+            device_id,
         })
     }
 
@@ -568,17 +577,18 @@ impl AuthService {
             .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
 
         let mut stmt = conn.prepare(
-            "SELECT server_url, access_token_encrypted
+            "SELECT server_url, access_token_encrypted, device_id
              FROM user_auth
              WHERE is_current = 1"
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to get auth info: {}", e)))?;
+        ).map_err(|e| AppError::DatabaseError(format!("获取认证信息失败: {}", e)))?;
 
-        let (server_url, encrypted_token): (String, String) = stmt.query_row([], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        }).map_err(|_| AppError::NotAuthenticated("No user logged in".to_string()))?;
+        let (server_url, encrypted_token, device_id): (String, String, String) = stmt.query_row([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        }).map_err(|_| AppError::NotAuthenticated("用户未登录".to_string()))?;
 
-        // 解密 token
-        let token = self.decrypt_token(&encrypted_token)?;
+        // 使用 device_id 解密 token
+        let key = CryptoService::derive_key_from_device_id(&device_id);
+        let token = CryptoService::decrypt_token(&encrypted_token, &key)?;
 
         Ok((server_url, token))
     }
@@ -589,17 +599,18 @@ impl AuthService {
             .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
 
         let mut stmt = conn.prepare(
-            "SELECT server_url, access_token_encrypted, token_expires_at
+            "SELECT server_url, access_token_encrypted, token_expires_at, device_id
              FROM user_auth
              WHERE is_current = 1"
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to get auth info: {}", e)))?;
+        ).map_err(|e| AppError::DatabaseError(format!("获取认证信息失败: {}", e)))?;
 
-        let (server_url, encrypted_token, expires_at): (String, String, i64) = stmt.query_row([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        }).map_err(|_| AppError::NotAuthenticated("No user logged in".to_string()))?;
+        let (server_url, encrypted_token, expires_at, device_id): (String, String, i64, String) = stmt.query_row([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        }).map_err(|_| AppError::NotAuthenticated("用户未登录".to_string()))?;
 
-        // 解密 token
-        let token = self.decrypt_token(&encrypted_token)?;
+        // 使用 device_id 解密 token
+        let key = CryptoService::derive_key_from_device_id(&device_id);
+        let token = CryptoService::decrypt_token(&encrypted_token, &key)?;
 
         Ok((server_url, token, expires_at))
     }
@@ -619,11 +630,11 @@ impl AuthService {
     ) -> Result<()> {
         log::debug!("[AuthService::save_user_auth] 开始保存用户认证信息: email={}, server_url={}, user_id={}", email, server_url, user_id);
 
-        // 加密 token
+        // 使用 device_id 加密 token
         log::debug!("[AuthService::save_user_auth] 开始加密 token");
-        let key = self.get_encryption_key();
-        let encrypted_access = self.encrypt_token(access_token, &key)?;
-        let encrypted_refresh = self.encrypt_token(refresh_token, &key)?;
+        let key = CryptoService::derive_key_from_device_id(device_id);
+        let encrypted_access = CryptoService::encrypt_token(access_token, &key)?;
+        let encrypted_refresh = CryptoService::encrypt_token(refresh_token, &key)?;
         log::debug!("[AuthService::save_user_auth] token 加密完成");
 
         let now = chrono::Utc::now().timestamp();
@@ -633,7 +644,7 @@ impl AuthService {
 
         // 开启事务
         let tx = conn.unchecked_transaction()
-            .map_err(|e| AppError::DatabaseError(format!("Failed to begin transaction: {}", e)))?;
+            .map_err(|e| AppError::DatabaseError(format!("开始事务失败: {}", e)))?;
 
         log::debug!("[AuthService::save_user_auth] 准备插入数据库: user_id={}, device_id={}", user_id, device_id);
 
@@ -641,7 +652,7 @@ impl AuthService {
         tx.execute(
             "UPDATE user_auth SET is_current = 0",
             [],
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to reset current flag: {}", e)))?;
+        ).map_err(|e| AppError::DatabaseError(format!("重置当前标志失败: {}", e)))?;
 
         // 插入或更新当前账号（is_current = 1）
         // 注意：这里使用 INSERT OR REPLACE，会根据 user_id 唯一约束判断是插入还是更新
@@ -671,125 +682,77 @@ impl AuthService {
                 now,   // created_at
                 now,   // updated_at
             ),
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to save auth: {}", e)))?;
+        ).map_err(|e| AppError::DatabaseError(format!("保存认证信息失败: {}", e)))?;
 
         tx.commit()
-            .map_err(|e| AppError::DatabaseError(format!("Failed to commit transaction: {}", e)))?;
+            .map_err(|e| AppError::DatabaseError(format!("提交事务失败: {}", e)))?;
 
         log::info!("[AuthService::save_user_auth] 用户认证信息保存成功: user_id={}", user_id);
         Ok(())
     }
 
-    /// 获取或创建设备 ID（设备级，所有用户共享）
-    fn get_or_create_device_id(&self) -> Result<String> {
+    /// 获取用户的 device_id（从 user_auth 表）
+    /// 如果不存在则生成新的 device_id
+    fn get_device_id_for_user(&self, user_id: &str) -> Result<String> {
         let conn = self.pool.get()
             .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
 
-        // 从 app_config 表获取设备 ID（设备级配置，不与特定用户绑定）
-        let mut stmt = conn.prepare("SELECT device_id FROM app_config WHERE id = 1")?;
+        // 尝试从 user_auth 表获取已有的 device_id
+        let mut stmt = conn.prepare("SELECT device_id FROM user_auth WHERE user_id = ?1 LIMIT 1")?;
 
-        match stmt.query_row([], |row| row.get::<_, String>(0)) {
+        match stmt.query_row([user_id], |row| row.get::<_, String>(0)) {
             Ok(device_id) => {
-                log::debug!("[AuthService::get_or_create_device_id] 使用已存在的设备 ID: {}", device_id);
+                log::debug!("[AuthService::get_device_id_for_user] 使用已存在的 device_id: {}", device_id);
                 Ok(device_id)
             }
             Err(_) => {
-                // 首次运行，生成并保存设备 ID
+                // 首次登录该用户，生成新的 device_id（由服务器注册时生成，这里先用临时 UUID）
                 let device_id = Uuid::new_v4().to_string();
-                let now = chrono::Utc::now().timestamp();
-
-                log::info!("[AuthService::get_or_create_device_id] 创建新的设备 ID: {}", device_id);
-
-                conn.execute(
-                    "INSERT INTO app_config (id, device_id, created_at, updated_at)
-                     VALUES (1, ?1, ?2, ?3)",
-                    [&device_id, &now as &dyn r2d2_sqlite::rusqlite::ToSql, &now as &dyn r2d2_sqlite::rusqlite::ToSql],
-                ).map_err(|e| AppError::DatabaseError(format!("Failed to save device_id: {}", e)))?;
-
+                log::info!("[AuthService::get_device_id_for_user] 生成新的临时 device_id: {}", device_id);
                 Ok(device_id)
             }
         }
     }
 
-    /// 获取加密密钥（基于设备 ID 派生）
-    fn get_encryption_key(&self) -> [u8; 32] {
-        // 应用特定盐值（硬编码，防止跨应用密钥重用）
-        const APP_SALT: &[u8] = b"markdown-notes-app-salt-2024";
+    /// 删除账号（需要密码验证）
+    pub async fn delete_account(&self, password: String) -> Result<()> {
+        // 获取当前用户信息
+        let user = self.get_current_user()?;
+        let server_url = user.server_url;
+        let access_token = self.get_access_token()?;
 
-        // 尝试从数据库获取设备 ID
-        let device_id = self.get_device_id_for_key()
-            .unwrap_or_else(|_| "fallback-device-id".to_string());
+        let url = format!("{}/auth/delete", server_url.trim_end_matches('/'));
 
-        // PBKDF2 参数
-        const ITERATIONS: u32 = 100_000; // OWASP 推荐的最小迭代次数
+        log::info!("Deleting account at {}", url);
 
-        let mut key = [0u8; 32];
+        let request_body = json!({
+            "password": password
+        });
 
-        // 使用 PBKDF2-HMAC-SHA256 派生密钥
-        pbkdf2_hmac::<Sha256>(
-            device_id.as_bytes(),     // 密码（使用 device_id）
-            APP_SALT,                  // 盐值（应用特定）
-            ITERATIONS,                // 迭代次数
-            &mut key,                  // 输出密钥
-        );
+        let response = self.client
+            .delete(&url)
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {}", access_token))
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| {
+                log::error!("Failed to send delete account request: {}", e);
+                AppError::NetworkError(format!("删除账号请求失败: {}", e))
+            })?;
 
-        log::debug!("Encryption key derived from device_id");
-        key
-    }
+        let status = response.status();
 
-    /// 获取设备 ID（用于密钥派生）
-    ///
-    /// 这个方法专门用于密钥派生，避免循环依赖
-    fn get_device_id_for_key(&self) -> Result<String> {
-        let conn = self.pool.get()
-            .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
-
-        let mut stmt = conn.prepare("SELECT device_id FROM user_auth WHERE is_current = 1")?;
-
-        match stmt.query_row([], |row| row.get::<_, String>(0)) {
-            Ok(device_id) => Ok(device_id),
-            Err(_) => {
-                // 如果数据库中没有 device_id，生成一个新的
-                let device_id = Uuid::new_v4().to_string();
-                log::warn!("No device_id found, generated new one for key derivation");
-                Ok(device_id)
-            }
-        }
-    }
-
-    /// 加密 token
-    fn encrypt_token(&self, token: &str, key: &[u8; 32]) -> Result<String> {
-        let cipher = Aes256Gcm::new(key.into());
-        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
-
-        let ciphertext = cipher.encrypt(&nonce, token.as_bytes())
-            .map_err(|e| AppError::EncryptionError(format!("Failed to encrypt: {}", e)))?;
-
-        // 组合 nonce 和 ciphertext
-        let mut result = nonce.to_vec();
-        result.extend_from_slice(&ciphertext);
-
-        Ok(general_purpose::STANDARD.encode(&result))
-    }
-
-    /// 解密 token
-    pub fn decrypt_token(&self, encrypted: &str) -> Result<String> {
-        let key = self.get_encryption_key();
-        let data = general_purpose::STANDARD.decode(encrypted)
-            .map_err(|e| AppError::EncryptionError(format!("Failed to decode: {}", e)))?;
-
-        if data.len() < 12 {
-            return Err(AppError::EncryptionError("Invalid encrypted data".to_string()));
+        if !status.is_success() {
+            let error_msg = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            log::error!("Server returned error {}: {}", status, error_msg);
+            return Err(AppError::AuthenticationError(error_msg));
         }
 
-        let (nonce_bytes, ciphertext) = data.split_at(12);
-        let nonce = Nonce::from_slice(nonce_bytes);
+        // 删除成功后，清除本地数据
+        self.logout()?;
 
-        let cipher = Aes256Gcm::new((&key).into());
-        let plaintext = cipher.decrypt(nonce, ciphertext)
-            .map_err(|e| AppError::EncryptionError(format!("Failed to decrypt: {}", e)))?;
-
-        String::from_utf8(plaintext)
-            .map_err(|e| AppError::EncryptionError(format!("Invalid UTF-8: {}", e)))
+        log::info!("Account deleted successfully: user_id={}", user.id);
+        Ok(())
     }
 }

@@ -6,3 +6,5 @@ src-tauri/gen/android
 src-tauri/gen/ios
 src-tauri/target
 docs/design.md
+test_sync*
+test_user*

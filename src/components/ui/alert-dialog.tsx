@@ -21,6 +21,21 @@ const AlertDialog = ({ open, onOpenChange, children }: AlertDialogProps) => {
   )
 }
 
+const AlertDialogTrigger = React.forwardRef<
+  HTMLButtonElement,
+  React.ButtonHTMLAttributes<HTMLButtonElement> & { asChild?: boolean }
+>(({ className, onClick, children, ...props }, ref) => (
+  <button
+    ref={ref}
+    className={cn(className)}
+    onClick={onClick}
+    {...props}
+  >
+    {children}
+  </button>
+))
+AlertDialogTrigger.displayName = "AlertDialogTrigger"
+
 const AlertDialogContent = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement>
@@ -125,6 +140,7 @@ AlertDialogCancel.displayName = "AlertDialogCancel"
 
 export {
   AlertDialog,
+  AlertDialogTrigger,
   AlertDialogContent,
   AlertDialogHeader,
   AlertDialogTitle,

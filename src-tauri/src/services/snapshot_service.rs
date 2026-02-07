@@ -21,7 +21,7 @@ impl SnapshotService {
     /// 创建快照
     pub fn create_snapshot(&self, req: CreateSnapshotRequest) -> Result<NoteSnapshot> {
         let conn = self.pool.get()
-            .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
 
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().timestamp();
@@ -33,29 +33,32 @@ impl SnapshotService {
             content: req.content,
             snapshot_name: req.snapshot_name,
             created_at: now,
+            server_ver: 1,
+            is_dirty: true,
+            last_synced_at: None,
         };
 
         conn.execute(
-            "INSERT INTO note_snapshots (id, note_id, title, content, snapshot_name, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            (&snapshot.id, &snapshot.note_id, &snapshot.title, &snapshot.content, &snapshot.snapshot_name, snapshot.created_at),
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to create snapshot: {}", e)))?;
+            "INSERT INTO note_snapshots (id, note_id, title, content, snapshot_name, created_at, server_ver, is_dirty, last_synced_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            (&snapshot.id, &snapshot.note_id, &snapshot.title, &snapshot.content, &snapshot.snapshot_name, snapshot.created_at, snapshot.server_ver, snapshot.is_dirty, snapshot.last_synced_at),
+        ).map_err(|e| AppError::DatabaseError(format!("创建快照失败: {}", e)))?;
 
-        log::info!("Created snapshot {} for note {}", id, snapshot.note_id);
+        log::info!("已为笔记 {} 创建快照 {}", id, snapshot.note_id);
         Ok(snapshot)
     }
 
     /// 列出笔记的所有快照
     pub fn list_snapshots(&self, note_id: &str) -> Result<Vec<SnapshotListItem>> {
         let conn = self.pool.get()
-            .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
 
         let mut stmt = conn.prepare(
             "SELECT id, note_id, title, snapshot_name, created_at
              FROM note_snapshots
              WHERE note_id = ?1
              ORDER BY created_at DESC"
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to list snapshots: {}", e)))?;
+        ).map_err(|e| AppError::DatabaseError(format!("列出快照失败: {}", e)))?;
 
         let snapshots = stmt.query_map([note_id], |row| {
             Ok(SnapshotListItem {
@@ -67,9 +70,9 @@ impl SnapshotService {
                 created_at_display: format_datetime(row.get(4)?),
             })
         })
-        .map_err(|e| AppError::DatabaseError(format!("Failed to parse snapshots: {}", e)))?
+        .map_err(|e| AppError::DatabaseError(format!("解析快照失败: {}", e)))?
         .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(|e| AppError::DatabaseError(format!("Failed to collect snapshots: {}", e)))?;
+        .map_err(|e| AppError::DatabaseError(format!("收集快照失败: {}", e)))?;
 
         Ok(snapshots)
     }
@@ -77,13 +80,13 @@ impl SnapshotService {
     /// 获取单个快照详情
     pub fn get_snapshot(&self, snapshot_id: &str) -> Result<NoteSnapshot> {
         let conn = self.pool.get()
-            .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, note_id, title, content, snapshot_name, created_at
+            "SELECT id, note_id, title, content, snapshot_name, created_at, server_ver, is_dirty, last_synced_at
              FROM note_snapshots
              WHERE id = ?1"
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to get snapshot: {}", e)))?;
+        ).map_err(|e| AppError::DatabaseError(format!("获取快照失败: {}", e)))?;
 
         let snapshot = stmt.query_row([snapshot_id], |row| {
             Ok(NoteSnapshot {
@@ -93,8 +96,11 @@ impl SnapshotService {
                 content: row.get(3)?,
                 snapshot_name: row.get(4)?,
                 created_at: row.get(5)?,
+                server_ver: row.get(6)?,
+                is_dirty: row.get(7)?,
+                last_synced_at: row.get(8)?,
             })
-        }).map_err(|e| AppError::NotFound(format!("Snapshot not found: {}", e)))?;
+        }).map_err(|e| AppError::NotFound(format!("快照未找到: {}", e)))?;
 
         Ok(snapshot)
     }
@@ -102,33 +108,33 @@ impl SnapshotService {
     /// 删除快照
     pub fn delete_snapshot(&self, snapshot_id: &str) -> Result<()> {
         let conn = self.pool.get()
-            .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
 
         conn.execute(
             "DELETE FROM note_snapshots WHERE id = ?1",
             [snapshot_id]
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to delete snapshot: {}", e)))?;
+        ).map_err(|e| AppError::DatabaseError(format!("删除快照失败: {}", e)))?;
 
-        log::info!("Deleted snapshot {}", snapshot_id);
+        log::info!("已删除快照 {}", snapshot_id);
         Ok(())
     }
 
     /// 从快照恢复笔记（返回快照内容，由调用者更新笔记）
     pub fn restore_from_snapshot(&self, snapshot_id: &str) -> Result<NoteSnapshot> {
         let snapshot = self.get_snapshot(snapshot_id)?;
-        log::info!("Restored note {} from snapshot {}", snapshot.note_id, snapshot_id);
+        log::info!("已从快照 {} 恢复笔记 {}", snapshot.note_id, snapshot_id);
         Ok(snapshot)
     }
 
     /// 删除笔记的所有快照
     pub fn delete_note_snapshots(&self, note_id: &str) -> Result<usize> {
         let conn = self.pool.get()
-            .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
 
         conn.execute(
             "DELETE FROM note_snapshots WHERE note_id = ?1",
             [note_id]
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to delete note snapshots: {}", e)))
+        ).map_err(|e| AppError::DatabaseError(format!("删除笔记快照失败: {}", e)))
     }
 }
 

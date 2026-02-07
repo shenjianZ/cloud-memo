@@ -13,7 +13,7 @@ impl EditorSettingsService {
     /// 获取编辑器设置
     pub fn get_settings(&self) -> Result<EditorSettings> {
         self.repo.find_by_id()?
-            .ok_or(AppError::Internal("Editor settings not found".to_string()))
+            .ok_or(AppError::Internal("编辑器设置未找到".to_string()))
     }
 
     /// 更新编辑器设置

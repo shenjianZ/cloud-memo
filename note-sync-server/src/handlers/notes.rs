@@ -1,9 +1,8 @@
-use axum::{Json, response::IntoResponse, Extension};
-use sqlx::MySqlPool;
-use serde::Deserialize;
-use axum::http::StatusCode;
-use crate::middleware::logging::{RequestId, log_info};
 use super::ErrorResponse;
+use crate::middleware::logging::{log_info, RequestId};
+use axum::{Extension, Json};
+use serde::Deserialize;
+use sqlx::MySqlPool;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateSnapshotRequest {

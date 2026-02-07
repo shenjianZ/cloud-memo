@@ -21,13 +21,13 @@ pub struct Folder {
     #[serde(default)]
     pub sort_order: i32,  // 排序顺序（同级文件夹内的排序）
 
-    // ===== 状态字段 =====
-    #[serde(default)]
-    pub is_deleted: bool,  // 是否已删除（软删除）
-
     // ===== 时间戳 =====
     pub created_at: i64,  // 创建时间（Unix 时间戳，秒）
     pub updated_at: i64,  // 更新时间（Unix 时间戳，秒）
+
+    // ===== 软删除字段 =====
+    #[serde(default)]
+    pub is_deleted: bool,  // 是否已删除（软删除）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deleted_at: Option<i64>,  // 删除时间（Unix 时间戳，秒）
 
@@ -63,9 +63,9 @@ impl Folder {
             icon,
             color,
             sort_order: 0,
-            is_deleted: false,
             created_at: now,
             updated_at: now,
+            is_deleted: false,
             deleted_at: None,
             server_ver: 0,
             is_dirty: true,

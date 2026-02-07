@@ -7,8 +7,21 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { toast } from 'sonner'
-import { ArrowLeft, Save, Phone, MessageCircle, Upload } from 'lucide-react'
+import { ArrowLeft, Save, Phone, MessageCircle, Upload, AlertTriangle, LogOut, RefreshCw } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import { deleteAccount } from '@/services/authApi'
+import { syncProfile } from '@/services/profileApi'
 
 // 最大头像大小：5MB
 const MAX_AVATAR_SIZE = 5 * 1024 * 1024
@@ -57,7 +70,7 @@ function validateImageFile(file: File): { valid: boolean; error?: string } {
 
 export default function Profile() {
   const navigate = useNavigate()
-  const { user } = useAuthStore()
+  const { user, logout } = useAuthStore()
   const { profile, isLoading, fetchProfile, updateProfile } = useProfileStore()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -70,6 +83,14 @@ export default function Profile() {
     avatarData: '' as string | undefined,
     avatarMimeType: '' as string | undefined,
   })
+
+  // 删除账号相关状态
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deletePassword, setDeletePassword] = useState('')
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  // 同步资料相关状态
+  const [isSyncing, setIsSyncing] = useState(false)
 
   useEffect(() => {
     fetchProfile()
@@ -117,6 +138,53 @@ export default function Profile() {
       toast.error('保存失败', {
         description: error instanceof Error ? error.message : '未知错误',
       })
+    }
+  }
+
+  // 处理删除账号
+  const handleDeleteAccount = async () => {
+    if (!deletePassword) {
+      toast.error('请输入密码')
+      return
+    }
+
+    setIsDeleting(true)
+    try {
+      await deleteAccount(deletePassword)
+      toast.success('账号已删除', {
+        description: '您的账号及所有数据已被永久删除',
+      })
+
+      // 删除成功后登出并跳转到登录页
+      await logout()
+      navigate('/auth/login')
+    } catch (error) {
+      toast.error('删除失败', {
+        description: error instanceof Error ? error.message : '未知错误',
+      })
+    } finally {
+      setIsDeleting(false)
+      setDeleteDialogOpen(false)
+      setDeletePassword('')
+    }
+  }
+
+  // 处理同步资料
+  const handleSyncProfile = async () => {
+    setIsSyncing(true)
+    try {
+      await syncProfile()
+      toast.success('同步成功', {
+        description: '个人资料已同步到云端',
+      })
+      // 更新本地profile状态
+      await fetchProfile()
+    } catch (error) {
+      toast.error('同步失败', {
+        description: error instanceof Error ? error.message : '未知错误',
+      })
+    } finally {
+      setIsSyncing(false)
     }
   }
 
@@ -206,14 +274,25 @@ export default function Profile() {
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-6">
       {/* 页面标题 */}
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <div>
-          <h1 className="text-3xl font-bold">个人中心</h1>
-          <p className="text-sm text-muted-foreground">管理你的个人信息</p>
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <div>
+            <h1 className="text-3xl font-bold">个人中心</h1>
+            <p className="text-sm text-muted-foreground">管理你的个人信息</p>
+          </div>
         </div>
+        <Button
+          variant="outline"
+          onClick={handleSyncProfile}
+          disabled={isSyncing || isLoading}
+          className="flex items-center gap-2"
+        >
+          <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
+          {isSyncing ? '同步中...' : '同步到云端'}
+        </Button>
       </div>
 
       {/* 头像区域 */}
@@ -333,6 +412,79 @@ export default function Profile() {
           </Button>
         </div>
       </form>
+
+      {/* 危险操作区域 */}
+      <div className="rounded-lg border border-destructive/50 p-6 space-y-4">
+        <h3 className="text-xl font-semibold text-destructive flex items-center gap-2">
+          <AlertTriangle className="h-5 w-5" />
+          危险操作
+        </h3>
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground">
+            删除账号将永久删除您的所有数据，包括笔记、文件夹和个人资料，此操作不可恢复。
+          </p>
+          <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+            <AlertDialogTrigger asChild>
+              <Button variant="destructive" className="w-fit">
+                <LogOut className="mr-2 h-4 w-4" />
+                删除账号
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+                  <AlertTriangle className="h-5 w-5" />
+                  确认删除账号？
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  <div className="space-y-4">
+                    <p className="text-sm">
+                      此操作将永久删除您的账号及所有数据，包括：
+                    </p>
+                    <ul className="text-sm list-disc list-inside space-y-1 text-muted-foreground">
+                      <li>所有笔记和文件夹</li>
+                      <li>个人资料和设置</li>
+                      <li>登录历史和设备信息</li>
+                    </ul>
+                    <p className="text-sm font-semibold text-destructive">
+                      此操作不可恢复，请谨慎操作！
+                    </p>
+                    <div className="space-y-2 pt-2">
+                      <Label htmlFor="delete-password">请输入密码确认</Label>
+                      <Input
+                        id="delete-password"
+                        type="password"
+                        placeholder="输入密码"
+                        value={deletePassword}
+                        onChange={(e) => setDeletePassword(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            handleDeleteAccount()
+                          }
+                        }}
+                      />
+                    </div>
+                  </div>
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={isDeleting}>取消</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={(e) => {
+                    e.preventDefault()
+                    handleDeleteAccount()
+                  }}
+                  disabled={isDeleting || !deletePassword}
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                >
+                  {isDeleting ? '删除中...' : '确认删除'}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      </div>
     </div>
   )
 }

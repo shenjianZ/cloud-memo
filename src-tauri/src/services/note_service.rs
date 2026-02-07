@@ -94,7 +94,7 @@ impl NoteService {
         self.repo.restore(id, &recovered_folder.id)?;
 
         // 返回恢复后的笔记
-        self.repo.find_by_id(id)?.ok_or(AppError::NotFound(format!("Note {} not found after restore", id)))
+        self.repo.find_by_id(id)?.ok_or(AppError::NotFound(format!("笔记 {} 恢复后未找到", id)))
     }
 
     /// 获取或创建"已恢复笔记"系统文件夹
@@ -117,7 +117,7 @@ impl NoteService {
 
         // 尝试查找已存在的"已恢复笔记"文件夹
         let all_folders = self.folder_repo.find_all()?;
-        if let Some(existing) = all_folders.iter().find(|f| f.name == RECOVERED_FOLDER_NAME && !f.is_deleted) {
+        if let Some(existing) = all_folders.iter().find(|f| f.name == RECOVERED_FOLDER_NAME) {
             // 如果已存在但 sort_order 不正确，更新它
             if existing.sort_order != RECOVERED_FOLDER_SORT_ORDER {
                 let mut updated = existing.clone();

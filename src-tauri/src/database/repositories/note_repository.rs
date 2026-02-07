@@ -158,8 +158,9 @@ impl NoteRepository {
         conn.execute(
             "INSERT INTO notes (id, title, content, excerpt, folder_id,
                               is_favorite, is_deleted, is_pinned, author,
-                              created_at, updated_at, word_count, read_time_minutes)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                              created_at, updated_at, word_count, read_time_minutes,
+                              server_ver, is_dirty, last_synced_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 note.id,
                 note.title,
@@ -173,7 +174,10 @@ impl NoteRepository {
                 note.created_at,
                 note.updated_at,
                 note.word_count,
-                note.read_time_minutes
+                note.read_time_minutes,
+                note.server_ver,
+                note.is_dirty as i32,
+                note.last_synced_at
             ],
         )?;
 
@@ -188,7 +192,8 @@ impl NoteRepository {
             "UPDATE notes
              SET title = ?, content = ?, excerpt = ?, folder_id = ?,
                  is_favorite = ?, is_pinned = ?, author = ?,
-                 updated_at = ?, word_count = ?, read_time_minutes = ?
+                 updated_at = ?, word_count = ?, read_time_minutes = ?,
+                 is_dirty = ?
              WHERE id = ?",
             params![
                 note.title,
@@ -201,6 +206,7 @@ impl NoteRepository {
                 note.updated_at,
                 note.word_count,
                 note.read_time_minutes,
+                note.is_dirty as i32,
                 note.id
             ],
         )?;

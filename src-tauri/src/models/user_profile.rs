@@ -5,6 +5,7 @@ use chrono::Utc;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct UserProfile {
+    #[serde(skip_deserializing)]  // 跳过服务器的 id（UUID），使用客户端自己的 id（i64）
     pub id: Option<i64>,  // 主键 ID（自增）
     pub user_id: String,  // 用户 ID（外键，关联 user_auth.user_id）
     pub username: Option<String>,  // 用户名
@@ -21,6 +22,7 @@ pub struct UserProfile {
 /// 创建用户资料请求
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]  // 预留功能：将来用户注册时创建资料
 pub struct CreateProfileRequest {
     pub user_id: String,  // 用户 ID
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -1,5 +1,5 @@
 mod commands;
-mod config;
+// mod config;  // 暂时注释，待实现
 mod database;
 mod models;
 mod services;
@@ -9,7 +9,7 @@ use database::repositories::{
     EditorSettingsRepository, FolderRepository, KeybindingRepository, NoteRepository,
     TagRepository, UserProfileRepository,
 };
-use services::{AppSettingsService, AuthService, SnapshotService, SyncService, UserProfileService};
+use services::{AppSettingsService, AuthService, AutoSyncService, SnapshotService, SyncService, SingleSyncService, UserProfileService};
 use services::{EditorSettingsService, FolderService, KeybindingService, NoteService, TagService};
 use tauri::Manager;
 
@@ -86,6 +86,13 @@ pub fn run() {
             // 同步服务需要直接使用连接池
             let sync_service = SyncService::new(pool.clone());
 
+            // 单个同步服务（需要 SyncService）
+            let single_sync_service = SingleSyncService::new(pool.clone(), sync_service.clone());
+
+            // 自动同步服务（需要 SyncService 和 AppSettingsService）
+            let app_settings_service = AppSettingsService::new(pool.clone());
+            let auto_sync_service = AutoSyncService::new(sync_service.clone(), app_settings_service.clone());
+
             // 认证服务
             let auth_service = AuthService::new(pool.clone());
 
@@ -96,9 +103,6 @@ pub fn run() {
             let user_profile_repo = UserProfileRepository::new(pool.clone());
             let user_profile_service = UserProfileService::new(user_profile_repo, pool.clone());
 
-            // 应用设置服务
-            let app_settings_service = AppSettingsService::new(pool.clone());
-
             // 注册服务到 Tauri 状态
             app.manage(note_service);
             app.manage(folder_service);
@@ -107,12 +111,34 @@ pub fn run() {
             app.manage(tag_service);
             // ===== 云端同步服务 =====
             app.manage(sync_service);
-            app.manage(auth_service);
+            app.manage(single_sync_service);
+            app.manage(auto_sync_service.clone()); // 克隆以便后续使用
+            app.manage(app_settings_service);
+            app.manage(auth_service.clone()); // 克隆以便后续使用
             app.manage(snapshot_service);
             app.manage(user_profile_service);
-            app.manage(app_settings_service);
 
             log::info!("Application services initialized");
+
+            // ===== 应用启动时检查本地登录状态并启动自动同步服务 =====
+            match auth_service.is_authenticated() {
+                Ok(true) => {
+                    log::info!("[App Startup] 检测到本地已登录用户，启动自动同步服务");
+                    // 在后台线程中启动自动同步服务
+                    let auto_sync_for_spawn = auto_sync_service.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = auto_sync_for_spawn.start().await {
+                            log::warn!("[App Startup] 启动自动同步服务失败: {}", e);
+                        }
+                    });
+                }
+                Ok(false) => {
+                    log::info!("[App Startup] 未检测到本地登录用户，跳过自动同步启动");
+                }
+                Err(e) => {
+                    log::warn!("[App Startup] 检查本地登录状态失败: {}", e);
+                }
+            }
 
             // 开发模式下自动打开开发者工具
             #[cfg(debug_assertions)]
@@ -169,6 +195,10 @@ pub fn run() {
             // ===== 云端同步命令 =====
             commands::sync_now,
             commands::get_sync_status,
+            commands::sync_single_note,
+            commands::sync_single_tag,
+            commands::sync_single_snapshot,
+            commands::sync_single_folder,
             commands::login,
             commands::register,
             commands::logout,

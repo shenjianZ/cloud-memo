@@ -6,6 +6,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 /// 应用设置服务
 ///
 /// 管理全局应用配置（默认服务器、同步设置等）
+#[derive(Clone)]
 pub struct AppSettingsService {
     pool: Pool<SqliteConnectionManager>,
 }
@@ -19,14 +20,14 @@ impl AppSettingsService {
     /// 获取应用设置
     pub fn get_settings(&self) -> Result<AppSettings> {
         let conn = self.pool.get()
-            .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
 
         let mut stmt = conn.prepare(
             "SELECT id, default_server_url, auto_sync_enabled, sync_interval_minutes,
                     theme, language, updated_at
              FROM app_settings
              WHERE id = 1"
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to query settings: {}", e)))?;
+        ).map_err(|e| AppError::DatabaseError(format!("查询应用设置失败: {}", e)))?;
 
         let settings = stmt.query_row([], |row| {
             Ok(AppSettings {
@@ -38,7 +39,7 @@ impl AppSettingsService {
                 language: row.get(5)?,
                 updated_at: row.get(6)?,
             })
-        }).map_err(|e| AppError::DatabaseError(format!("Settings not found: {}", e)))?;
+        }).map_err(|e| AppError::DatabaseError(format!("应用设置不存在: {}", e)))?;
 
         Ok(settings)
     }
@@ -46,7 +47,7 @@ impl AppSettingsService {
     /// 更新应用设置
     pub fn update_settings(&self, updates: UpdateAppSettings) -> Result<AppSettings> {
         let conn = self.pool.get()
-            .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
 
         // 获取当前设置
         let current = self.get_settings()?;
@@ -76,9 +77,9 @@ impl AppSettingsService {
                 &updated.language,
                 updated.updated_at,
             ),
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to update settings: {}", e)))?;
+        ).map_err(|e| AppError::DatabaseError(format!("更新应用设置失败: {}", e)))?;
 
-        log::info!("App settings updated");
+        log::info!("应用设置已更新");
         Ok(updated)
     }
 
@@ -94,7 +95,7 @@ impl AppSettingsService {
         let now = chrono::Utc::now().timestamp();
 
         let conn = self.pool.get()
-            .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
+            .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
 
         conn.execute(
             "UPDATE app_settings
@@ -109,9 +110,9 @@ impl AppSettingsService {
                 &default.language,
                 now,
             ),
-        ).map_err(|e| AppError::DatabaseError(format!("Failed to reset settings: {}", e)))?;
+        ).map_err(|e| AppError::DatabaseError(format!("重置应用设置失败: {}", e)))?;
 
-        log::info!("App settings reset to default");
+        log::info!("应用设置已重置为默认值");
         Ok(default)
     }
 }

@@ -1,10 +1,11 @@
 import { formatDistanceToNow } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
-import { Star, Tag as TagIcon } from 'lucide-react'
+import { Star, Tag as TagIcon, CloudOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Note } from '@/types/note'
 import { useTagStore } from '@/store/tagStore'
 import { getNoteTitle, getPlainText } from '@/lib/noteHelpers'
+import { useAuthStore } from '@/store/authStore'
 
 interface NoteCardProps {
   note: Note
@@ -18,6 +19,7 @@ interface NoteCardProps {
  */
 export function NoteCard({ note, onClick, isActive, onContextMenu }: NoteCardProps) {
   const { tags } = useTagStore()
+  const { isAuthenticated } = useAuthStore()
   const excerpt = getPlainText(note.content)
 
   // 获取笔记的标签
@@ -101,6 +103,10 @@ export function NoteCard({ note, onClick, isActive, onContextMenu }: NoteCardPro
             locale: zhCN,
           })}
         </span>
+        {/* 待同步图标（仅登录且笔记有脏标记时显示） */}
+        {isAuthenticated && note.isDirty && (
+          <CloudOff className="w-3 h-3 text-orange-500" aria-label="待同步" />
+        )}
       </div>
     </div>
   )

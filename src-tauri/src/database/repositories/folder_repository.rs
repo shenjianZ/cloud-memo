@@ -19,6 +19,12 @@ pub struct FolderRepository {
 }
 
 impl FolderRepository {
+    /// 统一的 SQL 查询字段列表
+    /// 字段顺序必须与 Folder 结构体初始化顺序一致
+    const SELECT_FIELDS: &'static str =
+        "id, name, parent_id, icon, color, sort_order, created_at, updated_at,
+         is_deleted, deleted_at, server_ver, is_dirty, last_synced_at";
+
     /// 创建新的 FolderRepository 实例
     pub fn new(pool: DbPool) -> Self {
         Self { pool }
@@ -28,8 +34,8 @@ impl FolderRepository {
     pub fn find_by_id(&self, id: &str) -> Result<Option<Folder>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT id, name, parent_id, icon, color, sort_order, is_deleted, created_at, updated_at, deleted_at,
-                    server_ver, is_dirty, last_synced_at
+            "SELECT id, name, parent_id, icon, color, sort_order, created_at, updated_at,
+                    is_deleted, deleted_at, server_ver, is_dirty, last_synced_at
              FROM folders
              WHERE id = ? AND is_deleted = 0"
         )?;
@@ -42,9 +48,9 @@ impl FolderRepository {
                 icon: row.get(3)?,
                 color: row.get(4)?,
                 sort_order: row.get(5)?,
-                is_deleted: row.get(6)?,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+                is_deleted: row.get(8)?,
                 deleted_at: row.get(9)?,
                 server_ver: row.get(10)?,
                 is_dirty: row.get(11)?,
@@ -63,8 +69,8 @@ impl FolderRepository {
     pub fn find_all(&self) -> Result<Vec<Folder>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT id, name, parent_id, icon, color, sort_order, is_deleted, created_at, updated_at, deleted_at,
-                    server_ver, is_dirty, last_synced_at
+            "SELECT id, name, parent_id, icon, color, sort_order, created_at, updated_at,
+                    is_deleted, deleted_at, server_ver, is_dirty, last_synced_at
              FROM folders
              WHERE is_deleted = 0
              ORDER BY sort_order ASC, created_at ASC"
@@ -78,9 +84,9 @@ impl FolderRepository {
                 icon: row.get(3)?,
                 color: row.get(4)?,
                 sort_order: row.get(5)?,
-                is_deleted: row.get(6)?,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+                is_deleted: row.get(8)?,
                 deleted_at: row.get(9)?,
                 server_ver: row.get(10)?,
                 is_dirty: row.get(11)?,
@@ -96,11 +102,14 @@ impl FolderRepository {
     pub fn create(&self, folder: &Folder) -> Result<Folder> {
         let conn = self.pool.get()?;
         conn.execute(
-            "INSERT INTO folders (id, name, parent_id, icon, color, sort_order, is_deleted, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO folders (id, name, parent_id, icon, color, sort_order, created_at, updated_at,
+                                is_deleted, deleted_at, server_ver, is_dirty, last_synced_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 folder.id, folder.name, folder.parent_id, folder.icon, folder.color,
-                folder.sort_order, folder.is_deleted as i32, folder.created_at, folder.updated_at
+                folder.sort_order, folder.created_at, folder.updated_at,
+                folder.is_deleted as i32, folder.deleted_at,
+                folder.server_ver, folder.is_dirty as i32, folder.last_synced_at
             ],
         )?;
 
@@ -113,11 +122,12 @@ impl FolderRepository {
         let conn = self.pool.get()?;
         conn.execute(
             "UPDATE folders
-             SET name = ?, parent_id = ?, icon = ?, color = ?, sort_order = ?, updated_at = ?
-             WHERE id = ?",
+             SET name = ?, parent_id = ?, icon = ?, color = ?, sort_order = ?, updated_at = ?,
+                 is_dirty = ?
+             WHERE id = ? AND is_deleted = 0",
             params![
                 folder.name, folder.parent_id, folder.icon, folder.color,
-                folder.sort_order, folder.updated_at, folder.id
+                folder.sort_order, folder.updated_at, folder.is_dirty as i32, folder.id
             ],
         )?;
 
@@ -125,116 +135,51 @@ impl FolderRepository {
         Ok(folder.clone())
     }
 
-    /// 软删除文件夹（已废弃，请使用 hard_delete）
-    ///
-    /// ⚠️ 警告：软删除文件夹会导致树结构逻辑断裂
-    /// - 子文件夹的 parent_id 指向已删除的父节点
-    /// - 查询时需要额外过滤 is_deleted
-    /// - 恢复时子文件夹状态不一致
-    #[deprecated(note = "请使用 hard_delete 代替")]
-    pub fn soft_delete(&self, id: &str) -> Result<()> {
-        let conn = self.pool.get()?;
-        let now = chrono::Utc::now().timestamp();
-        conn.execute(
-            "UPDATE folders SET is_deleted = 1, deleted_at = ? WHERE id = ?",
-            params![now, id],
-        )?;
-
-        log::debug!("Folder soft deleted: {}", id);
-        Ok(())
-    }
-
-    /// 物理删除文件夹（推荐使用）
+    /// 删除文件夹（软删除）
     ///
     /// ## 删除行为
     ///
-    /// ### 对文件夹的影响
-    /// - 删除目标文件夹本身
-    /// - **级联删除所有子文件夹**（通过 ON DELETE CASCADE）
-    /// - 子文件夹的子文件夹……整棵子树全部删除
-    ///
-    /// ### 对笔记的影响
-    /// - **软删除该文件夹及所有子文件夹下的笔记**（is_deleted = 1）
-    /// - 这些笔记会进入回收站，可以被恢复
+    /// - **文件夹**：标记为已删除（软删除）
+    /// - **子文件夹**：递归标记所有子文件夹为已删除
+    /// - **笔记**：笔记不会被删除，folder_id 保持不变
     ///
     /// ## 示例
     ///
     /// ```text
     /// 删除前：                 删除后：
-    /// 📁 工作文件夹             📄 工作笔记1（回收站）
-    ///   ├─ 📄 工作笔记1         📄 工作笔记2（回收站）
-    ///   ├─ 📄 工作笔记2
-    ///   └─ 📁 2024项目         ❌ 整个子树被删除
-    ///       └─ 📄 项目笔记     📄 项目笔记（回收站）
+    /// 📁 工作文件夹             📁 工作文件夹（is_deleted=1）
+    ///   ├─ 📄 工作笔记1         📄 工作笔记1（folder_id 不变）
+    ///   ├─ 📄 工作笔记2         📄 工作笔记2（folder_id 不变）
+    ///   └─ 📁 2024项目         📁 2024项目（is_deleted=1）
+    ///       └─ 📄 项目笔记     📄 项目笔记（folder_id 不变）
     /// ```
-    ///
-    /// ## 为什么推荐物理删除？
-    ///
-    /// 1. **树结构完整**：外键约束自动维护，不会出现断裂
-    /// 2. **代码简单**：不需要递归逻辑，数据库自动处理
-    /// 3. **同步友好**：删除事件清晰，不会产生状态冲突
-    /// 4. **性能更好**：一次 DELETE，数据库自动级联
     ///
     /// ## 注意事项
     ///
-    /// - ⚠️ **不可恢复文件夹**：物理删除无法恢复，删除前应提示用户
-    /// - ✅ **笔记可恢复**：笔记进入回收站，可以恢复
-    /// - ✅ **递归软删除**：自动软删除所有子文件夹下的笔记
-    pub fn hard_delete(&self, id: &str) -> Result<()> {
+    /// - ✅ **可恢复**：文件夹和子文件夹可以恢复
+    /// - ✅ **笔记保留**：笔记不会被删除，保持文件夹关联
+    /// - ⚠️ **同步标记**：删除操作会被标记为需要同步
+    pub fn delete(&self, id: &str) -> Result<()> {
         let conn = self.pool.get()?;
-
-        // 第一步：获取所有子孙文件夹的 ID（包括自己）
-        let folder_ids = self.get_all_descendant_ids(id)?;
-
-        // 第二步：软删除这些文件夹下的所有笔记
         let now = chrono::Utc::now().timestamp();
-        if !folder_ids.is_empty() {
-            let placeholders = folder_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-            let sql = format!(
-                "UPDATE notes SET is_deleted = 1, deleted_at = ? WHERE folder_id IN ({})",
-                placeholders
-            );
 
-            let mut params_list: Vec<&dyn r2d2_sqlite::rusqlite::ToSql> = vec![&now];
-            for folder_id in &folder_ids {
-                params_list.push(folder_id);
-            }
+        // 软删除文件夹及所有子文件夹（使用递归CTE）
+        conn.execute(
+            "WITH RECURSIVE folder_tree AS (
+                -- 起始文件夹
+                SELECT id FROM folders WHERE id = ?1
+                UNION ALL
+                -- 子文件夹
+                SELECT f.id FROM folders f
+                INNER JOIN folder_tree ft ON f.parent_id = ft.id
+                WHERE f.is_deleted = 0
+            )
+            UPDATE folders SET is_deleted = 1, deleted_at = ?2, is_dirty = 1
+            WHERE id IN folder_tree",
+            params![id, now],
+        )?;
 
-            conn.execute(&sql, params_list.as_slice())?;
-            log::debug!("Soft deleted notes in folders: {:?}", folder_ids);
-        }
-
-        // 第三步：物理删除文件夹（级联删除子文件夹）
-        conn.execute("DELETE FROM folders WHERE id = ?", params![id])?;
-
-        log::debug!("Folder hard deleted: {} (cascade to children, notes moved to trash)", id);
-        Ok(())
-    }
-
-    /// 获取文件夹的所有子孙文件夹 ID（包括自己）
-    ///
-    /// ## 实现原理
-    /// 1. 递归查询数据库（利用 parent_id 外键）
-    /// 2. 收集所有子孙节点的 ID
-    fn get_all_descendant_ids(&self, id: &str) -> Result<Vec<String>> {
-        let mut ids = Vec::new();
-        self.collect_descendant_ids_recursive(id, &mut ids)?;
-        Ok(ids)
-    }
-
-    /// 递归收集子孙文件夹 ID
-    fn collect_descendant_ids_recursive(&self, parent_id: &str, ids: &mut Vec<String>) -> Result<()> {
-        // 添加自己
-        ids.push(parent_id.to_string());
-
-        // 查找直接子文件夹
-        let children = self.find_children(Some(parent_id))?;
-
-        // 递归处理每个子文件夹
-        for child in children {
-            self.collect_descendant_ids_recursive(&child.id, ids)?;
-        }
-
+        log::debug!("Folder soft deleted: {} (cascade to children)", id);
         Ok(())
     }
 
@@ -243,23 +188,21 @@ impl FolderRepository {
         let conn = self.pool.get()?;
 
         if let Some(pid) = parent_id {
-            let mut stmt = conn.prepare(
-                "SELECT id, name, parent_id, icon, color, sort_order, is_deleted, created_at, updated_at, deleted_at,
-                        server_ver, is_dirty, last_synced_at
-                 FROM folders
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {} FROM folders
                  WHERE parent_id = ? AND is_deleted = 0
-                 ORDER BY sort_order ASC, created_at ASC"
-            )?;
+                 ORDER BY sort_order ASC, created_at ASC",
+                Self::SELECT_FIELDS
+            ))?;
             let folders = stmt.query_map(params![pid], |row| self.row_to_folder(row))?;
             folders.collect::<std::result::Result<Vec<_>, _>>().map_err(AppError::Database)
         } else {
-            let mut stmt = conn.prepare(
-                "SELECT id, name, parent_id, icon, color, sort_order, is_deleted, created_at, updated_at, deleted_at,
-                        server_ver, is_dirty, last_synced_at
-                 FROM folders
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {} FROM folders
                  WHERE parent_id IS NULL AND is_deleted = 0
-                 ORDER BY sort_order ASC, created_at ASC"
-            )?;
+                 ORDER BY sort_order ASC, created_at ASC",
+                Self::SELECT_FIELDS
+            ))?;
             let folders = stmt.query_map([], |row| self.row_to_folder(row))?;
             folders.collect::<std::result::Result<Vec<_>, _>>().map_err(AppError::Database)
         }
@@ -323,12 +266,12 @@ impl FolderRepository {
 
         let max_order: Option<i32> = if let Some(pid) = parent_id {
             let mut stmt = conn.prepare(
-                "SELECT MAX(sort_order) FROM folders WHERE parent_id = ? AND is_deleted = 0"
+                "SELECT MAX(sort_order) FROM folders WHERE parent_id = ?"
             )?;
             stmt.query_row(params![pid], |row| row.get(0))?
         } else {
             let mut stmt = conn.prepare(
-                "SELECT MAX(sort_order) FROM folders WHERE parent_id IS NULL AND is_deleted = 0"
+                "SELECT MAX(sort_order) FROM folders WHERE parent_id IS NULL"
             )?;
             stmt.query_row([], |row| row.get(0))?
         };
@@ -364,6 +307,7 @@ impl FolderRepository {
     }
 
     /// 辅助方法：从行数据转换为 Folder
+    /// 字段顺序必须与 SELECT_FIELDS 一致
     fn row_to_folder(&self, row: &r2d2_sqlite::rusqlite::Row) -> std::result::Result<Folder, r2d2_sqlite::rusqlite::Error> {
         Ok(Folder {
             id: row.get(0)?,
@@ -372,9 +316,9 @@ impl FolderRepository {
             icon: row.get(3)?,
             color: row.get(4)?,
             sort_order: row.get(5)?,
-            is_deleted: row.get(6)?,
-            created_at: row.get(7)?,
-            updated_at: row.get(8)?,
+            created_at: row.get(6)?,
+            updated_at: row.get(7)?,
+            is_deleted: row.get(8)?,
             deleted_at: row.get(9)?,
             server_ver: row.get(10)?,
             is_dirty: row.get(11)?,

@@ -1,8 +1,7 @@
-use axum::{Json, response::IntoResponse, Extension};
-use serde::{Deserialize, Serialize};
-use axum::http::StatusCode;
-use crate::middleware::logging::{RequestId, log_info};
 use super::ErrorResponse;
+use crate::middleware::logging::{log_info, RequestId};
+use axum::{Extension, Json};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateFolderRequest {

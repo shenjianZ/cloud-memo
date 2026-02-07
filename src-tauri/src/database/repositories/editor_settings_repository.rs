@@ -52,7 +52,7 @@ impl EditorSettingsRepository {
     fn create(&self, settings: &EditorSettings) -> Result<EditorSettings> {
         let conn = self.pool.get()?;
         conn.execute(
-            "INSERT INTO editor_settings (
+            "INSERT OR REPLACE INTO editor_settings (
                 id, content_font_family, content_font_size, content_font_weight,
                 content_line_height, heading_font_family, heading_font_weight,
                 code_font_family, code_font_size, updated_at
