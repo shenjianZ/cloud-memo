@@ -7,6 +7,9 @@ WORKDIR /volume
 # 复制 Cargo 配置
 COPY Cargo.toml Cargo.lock ./
 
+# 复制配置文件（用于 sqlx 编译时验证）
+COPY config/ ./config/
+
 # 创建一个虚拟的 src 目录来缓存依赖
 RUN mkdir src && \
     echo "fn main() {}" > src/main.rs && \
@@ -15,6 +18,13 @@ RUN mkdir src && \
 
 # 复制源代码
 COPY src ./src
+
+# 设置构建时环境变量（可以从 docker build --build-arg 传入）
+ARG DATABASE_URL=mysql://root:root@localhost:3306/notes-sync
+ARG BUILD_ENV=production
+
+ENV DATABASE_URL=${DATABASE_URL}
+ENV CLOUDMEMO_ENV=${BUILD_ENV}
 
 # 构建实际的项目
 RUN cargo build --release && \

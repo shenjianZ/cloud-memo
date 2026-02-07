@@ -8,6 +8,7 @@ IMAGE_NAME="registry.cn-hangzhou.aliyuncs.com/pull-image/muslrust:latest"
 CONTAINER_NAME="note-sync-builder"
 PROJECT_DIR="$(pwd)"
 OUTPUT_DIR="${PROJECT_DIR}/target/x86_64-unknown-linux-musl/release"
+BUILD_ENV="${1:-development}"
 
 echo "========================================="
 echo "  Note Sync Server - Musl Build Script"
@@ -21,10 +22,28 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
+# 读取 DATABASE_URL（优先级：环境变量 > 配置文件）
+if [ -z "$DATABASE_URL" ]; then
+    # 尝试从配置文件读取
+    CONFIG_FILE="config/${BUILD_ENV}.toml"
+    if [ -f "$CONFIG_FILE" ]; then
+        # 简单提取 database.url（需要 toml-cli 或 grep）
+        DATABASE_URL=$(grep -m1 '^url\s*=' "$CONFIG_FILE" | sed 's/^url\s*=\s*//' | tr -d '"' | tr -d "'")
+    fi
+fi
+
+# 如果仍然没有 DATABASE_URL，使用默认值
+if [ -z "$DATABASE_URL" ]; then
+    DATABASE_URL="mysql://root:root@host.docker.internal:3306/notes-sync"
+    echo "⚠️  未设置 DATABASE_URL，使用默认值: $DATABASE_URL"
+fi
+
+echo "构建环境: ${BUILD_ENV}"
+echo "数据库连接: ${DATABASE_URL}"
+echo ""
 
 echo "拉取 ${IMAGE_NAME} 镜像..."
 docker pull ${IMAGE_NAME}
-
 
 echo ""
 echo "开始构建..."
@@ -36,6 +55,9 @@ docker run --rm \
     -v "${PROJECT_DIR}:/volume:z" \
     -w /volume \
     -e CARGO_TARGET_DIR=/volume/target \
+    -e DATABASE_URL="${DATABASE_URL}" \
+    -e CLOUDMEMO_ENV="${BUILD_ENV}" \
+    --network host \
     ${IMAGE_NAME} \
     cargo build --release
 
