@@ -2,12 +2,63 @@ use anyhow::Result;
 use sqlx::MySqlPool;
 use uuid::Uuid;
 use chrono::Utc;
+use std::sync::Arc;
 use crate::models::SyncLock;
 
 /// 同步锁服务
 /// 用于获取和释放同步操作锁，防止并发冲突
+#[derive(Clone)]
 pub struct SyncLockService {
     pool: MySqlPool,
+}
+
+/// 同步锁守卫（RAII 模式）
+///
+/// 当守卫被 drop 时，会自动释放锁。
+/// 这确保了即使发生 panic 或早期返回，锁也能被正确释放。
+pub struct SyncLockGuard {
+    lock_id: Option<String>,
+    user_id: String,
+    service: SyncLockService,
+}
+
+impl SyncLockGuard {
+    /// 创建一个新的守卫
+    pub fn new(lock_id: String, user_id: String, service: SyncLockService) -> Self {
+        Self {
+            lock_id: Some(lock_id),
+            user_id,
+            service,
+        }
+    }
+
+    /// 手动释放锁（可选）
+    ///
+    /// 如果已经释放，再次调用不会产生效果
+    pub async fn release(mut self) {
+        if let Some(lock_id) = self.lock_id.take() {
+            let _ = self.service.release_lock(&lock_id, &self.user_id).await;
+        }
+    }
+}
+
+impl Drop for SyncLockGuard {
+    fn drop(&mut self) {
+        if let Some(lock_id) = self.lock_id.take() {
+            let user_id = self.user_id.clone();
+            let service = self.service.clone();
+
+            // 在后台任务中异步释放锁
+            // Drop trait 不能是 async，所以我们需要 spawn 一个任务
+            tokio::spawn(async move {
+                if let Err(e) = service.release_lock(&lock_id, &user_id).await {
+                    tracing::warn!("释放同步锁失败: lock_id={}, error={}", lock_id, e);
+                } else {
+                    tracing::info!("自动释放同步锁: lock_id={}", lock_id);
+                }
+            });
+        }
+    }
 }
 
 impl SyncLockService {
@@ -112,5 +163,18 @@ impl SyncLockService {
         .await?;
 
         Ok(())
+    }
+
+    /// 获取同步操作锁，返回守卫（RAII 模式）
+    ///
+    /// 守卫会在 drop 时自动释放锁，推荐使用此方法而不是 acquire_lock
+    pub async fn acquire_guard(
+        &self,
+        user_id: &str,
+        device_id: &str,
+        lock_duration_seconds: i64,
+    ) -> Result<SyncLockGuard> {
+        let lock_id = self.acquire_lock(user_id, device_id, lock_duration_seconds).await?;
+        Ok(SyncLockGuard::new(lock_id, user_id.to_string(), self.clone()))
     }
 }

@@ -98,6 +98,101 @@ impl FolderRepository {
         Ok(folders)
     }
 
+    /// 根据名称查找文件夹（包括已删除的）
+    pub fn find_by_name_include_deleted(&self, name: &str) -> Result<Option<Folder>> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, name, parent_id, icon, color, sort_order, created_at, updated_at,
+                    is_deleted, deleted_at, server_ver, is_dirty, last_synced_at
+             FROM folders
+             WHERE name = ?
+             LIMIT 1"
+        )?;
+
+        let folder = stmt.query_row(params![name], |row| {
+            Ok(Folder {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                parent_id: row.get(2)?,
+                icon: row.get(3)?,
+                color: row.get(4)?,
+                sort_order: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+                is_deleted: row.get(8)?,
+                deleted_at: row.get(9)?,
+                server_ver: row.get(10)?,
+                is_dirty: row.get(11)?,
+                last_synced_at: row.get(12)?,
+            })
+        });
+
+        match folder {
+            Ok(f) => Ok(Some(f)),
+            Err(r2d2_sqlite::rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(AppError::Database(e)),
+        }
+    }
+
+    /// 恢复已删除的文件夹
+    pub fn restore(&self, id: &str) -> Result<Folder> {
+        let conn = self.pool.get()?;
+        let now = chrono::Utc::now().timestamp();
+
+        // 先获取文件夹信息
+        let folder = self.find_by_id_include_deleted(id)?;
+
+        // 更新为未删除状态
+        conn.execute(
+            "UPDATE folders SET is_deleted = 0, deleted_at = NULL, updated_at = ?, is_dirty = 1 WHERE id = ?",
+            params![now, id],
+        )?;
+
+        let mut restored_folder = folder.unwrap();
+        restored_folder.is_deleted = false;
+        restored_folder.deleted_at = None;
+        restored_folder.updated_at = now;
+        restored_folder.is_dirty = true;
+
+        log::info!("Folder restored: {}", id);
+        Ok(restored_folder)
+    }
+
+    /// 根据 ID 查找文件夹（包括已删除的）
+    fn find_by_id_include_deleted(&self, id: &str) -> Result<Option<Folder>> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, name, parent_id, icon, color, sort_order, created_at, updated_at,
+                    is_deleted, deleted_at, server_ver, is_dirty, last_synced_at
+             FROM folders
+             WHERE id = ?"
+        )?;
+
+        let folder = stmt.query_row(params![id], |row| {
+            Ok(Folder {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                parent_id: row.get(2)?,
+                icon: row.get(3)?,
+                color: row.get(4)?,
+                sort_order: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+                is_deleted: row.get(8)?,
+                deleted_at: row.get(9)?,
+                server_ver: row.get(10)?,
+                is_dirty: row.get(11)?,
+                last_synced_at: row.get(12)?,
+            })
+        });
+
+        match folder {
+            Ok(f) => Ok(Some(f)),
+            Err(r2d2_sqlite::rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(AppError::Database(e)),
+        }
+    }
+
     /// 创建新文件夹
     pub fn create(&self, folder: &Folder) -> Result<Folder> {
         let conn = self.pool.get()?;
@@ -157,14 +252,14 @@ impl FolderRepository {
     /// ## 注意事项
     ///
     /// - ✅ **可恢复**：文件夹和子文件夹可以恢复
-    /// - ✅ **笔记保留**：笔记不会被删除，保持文件夹关联
+    /// - ✅ **笔记级联删除**：文件夹及其子文件夹下的所有笔记也会被软删除
     /// - ⚠️ **同步标记**：删除操作会被标记为需要同步
     pub fn delete(&self, id: &str) -> Result<()> {
         let conn = self.pool.get()?;
         let now = chrono::Utc::now().timestamp();
 
-        // 软删除文件夹及所有子文件夹（使用递归CTE）
-        conn.execute(
+        // 1. 软删除文件夹及所有子文件夹（使用递归CTE）
+        let affected_folders = conn.execute(
             "WITH RECURSIVE folder_tree AS (
                 -- 起始文件夹
                 SELECT id FROM folders WHERE id = ?1
@@ -179,7 +274,28 @@ impl FolderRepository {
             params![id, now],
         )?;
 
-        log::debug!("Folder soft deleted: {} (cascade to children)", id);
+        // 2. 软删除这些文件夹下的所有笔记（级联删除）
+        // 注意：不能使用 is_deleted = 0 过滤，因为第 1 步已经将文件夹标记为删除
+        let affected_notes = conn.execute(
+            "WITH RECURSIVE folder_tree AS (
+                -- 起始文件夹
+                SELECT id FROM folders WHERE id = ?1
+                UNION ALL
+                -- 递归查找所有子文件夹（不管是否已标记删除）
+                SELECT f.id FROM folders f
+                INNER JOIN folder_tree ft ON f.parent_id = ft.id
+            )
+            UPDATE notes SET is_deleted = 1, deleted_at = ?2, is_dirty = 1
+            WHERE folder_id IN folder_tree AND is_deleted = 0",
+            params![id, now],
+        )?;
+
+        log::info!(
+            "Folder soft deleted: id={}, folders_affected={}, notes_affected={}",
+            id,
+            affected_folders,
+            affected_notes
+        );
         Ok(())
     }
 

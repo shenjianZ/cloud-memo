@@ -131,3 +131,18 @@ export async function listDeletedNotes(): Promise<Note[]> {
 export async function searchNotes(query: string): Promise<Note[]> {
   return invoke('search_notes', { query });
 }
+
+/**
+ * 获取笔记数量（不包括软删除的笔记）
+ *
+ * @returns 笔记总数
+ *
+ * @example
+ * ```typescript
+ * const count = await getNotesCount();
+ * console.log(`当前共有 ${count} 篇笔记`);
+ * ```
+ */
+export async function getNotesCount(): Promise<number> {
+  return invoke('get_notes_count');
+}

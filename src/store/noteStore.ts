@@ -113,6 +113,7 @@ interface NoteStore {
     activeNoteId: string | null;
     isLoading: boolean;
     isStorageLoaded: boolean;
+    notesCount: number; // 笔记总数（不包括软删除的）
 
     // 笔记操作
     createNote: (note: Partial<Note>) => Promise<Note>;
@@ -146,6 +147,9 @@ interface NoteStore {
     loadNotesFromStorage: () => Promise<void>;
     saveNotesToStorage: () => Promise<void>;
 
+    // 统计
+    refreshNotesCount: () => Promise<void>;
+
     // 批量操作
     pinNote: (id: string) => void;
     favoriteNote: (id: string) => void;
@@ -163,6 +167,16 @@ export const useNoteStore = create<NoteStore>()(
             activeNoteId: null,
             isLoading: false,
             isStorageLoaded: false,
+            notesCount: 0,
+
+            refreshNotesCount: async () => {
+                try {
+                    const count = await noteApi.getNotesCount();
+                    set({ notesCount: count });
+                } catch (error) {
+                    console.error("Failed to refresh notes count:", error);
+                }
+            },
 
             createNote: async (note: Partial<Note>) => {
                 set({ isLoading: true });
@@ -177,6 +191,9 @@ export const useNoteStore = create<NoteStore>()(
                         activeNoteId: newNote.id,
                         isLoading: false,
                     }));
+
+                    // 刷新笔记数量
+                    get().refreshNotesCount();
 
                     return newNote;
                 } catch (error) {
@@ -220,6 +237,9 @@ export const useNoteStore = create<NoteStore>()(
                                 : state.activeNoteId,
                         isLoading: false,
                     }));
+
+                    // 刷新笔记数量
+                    get().refreshNotesCount();
                 } catch (error) {
                     console.error("Failed to delete note:", error);
                     set({ isLoading: false });
@@ -231,21 +251,19 @@ export const useNoteStore = create<NoteStore>()(
                 set({ isLoading: true });
                 try {
                     const apiNote = await noteApi.restoreNote(id);
-                    const tagStore = useTagStore.getState();
-                    const restoredNote = await apiNoteToNote(apiNote, tagStore);
 
-                    set((state) => ({
-                        notes: [...state.notes, restoredNote],
-                        activeNoteId: restoredNote.id,
-                        isLoading: false,
-                    }));
+                    // 重新加载所有笔记和文件夹（确保显示恢复的"已恢复笔记"文件夹）
+                    await get().loadNotesFromStorage();
+
+                    // 刷新笔记数量
+                    get().refreshNotesCount();
 
                     // 只刷新列表，不跳转页面
                     toast.success("笔记已恢复", {
                         description: "已添加到笔记列表",
                     });
 
-                    return restoredNote;
+                    return apiNote;
                 } catch (error) {
                     console.error("Failed to restore note:", error);
                     set({ isLoading: false });
@@ -261,24 +279,19 @@ export const useNoteStore = create<NoteStore>()(
                 set({ isLoading: true });
                 try {
                     const apiNotes = await noteApi.restoreNotes(ids);
-                    const tagStore = useTagStore.getState();
-                    const restoredNotes = await Promise.all(
-                        apiNotes.map((apiNote) =>
-                            apiNoteToNote(apiNote, tagStore),
-                        ),
-                    );
 
-                    set((state) => ({
-                        notes: [...state.notes, ...restoredNotes],
-                        isLoading: false,
-                    }));
+                    // 重新加载所有笔记和文件夹（确保显示恢复的"已恢复笔记"文件夹）
+                    await get().loadNotesFromStorage();
+
+                    // 刷新笔记数量
+                    get().refreshNotesCount();
 
                     // 只刷新列表，不跳转页面
-                    toast.success(`已恢复 ${restoredNotes.length} 篇笔记`, {
+                    toast.success(`已恢复 ${apiNotes.length} 篇笔记`, {
                         description: "已添加到笔记列表",
                     });
 
-                    return restoredNotes;
+                    return apiNotes;
                 } catch (error) {
                     console.error("Failed to restore notes:", error);
                     set({ isLoading: false });
@@ -363,6 +376,9 @@ export const useNoteStore = create<NoteStore>()(
                         folders: state.folders.filter((f) => f.id !== id),
                         isLoading: false,
                     }));
+
+                    // 刷新笔记数量（删除文件夹可能会删除其中的笔记）
+                    get().refreshNotesCount();
                 } catch (error) {
                     console.error("Failed to delete folder:", error);
                     set({ isLoading: false });
@@ -580,6 +596,9 @@ export const useNoteStore = create<NoteStore>()(
                         isLoading: false,
                         isStorageLoaded: true,
                     });
+
+                    // 刷新笔记数量
+                    get().refreshNotesCount();
                 } catch (error) {
                     console.error("Failed to load notes from storage:", error);
                     set({ isLoading: false, isStorageLoaded: true });

@@ -166,6 +166,7 @@ pub fn run() {
             commands::list_deleted_notes,
             commands::search_notes,
             commands::move_notes_to_folder,
+            commands::get_notes_count,
             // 文件夹命令
             commands::create_folder,
             commands::get_folder,

@@ -156,6 +156,10 @@ export const useSyncStore = create<SyncState>()(
                         toast.success("笔记同步成功", {
                             description: message,
                         });
+
+                        // 刷新笔记数量
+                        const { useNoteStore } = await import("@/store/noteStore");
+                        await useNoteStore.getState().refreshNotesCount();
                     } else {
                         set({
                             status: "error",

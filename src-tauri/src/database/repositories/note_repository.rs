@@ -305,4 +305,21 @@ impl NoteRepository {
         log::debug!("Search completed: {} results", notes.len());
         Ok(notes)
     }
+
+    /// 统计笔记数量（不包括软删除的笔记）
+    ///
+    /// ## 返回
+    ///
+    /// 返回 `is_deleted = 0` 的笔记总数
+    pub fn count(&self) -> Result<i64> {
+        let conn = self.pool.get()?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM notes WHERE is_deleted = 0",
+            [],
+            |row| row.get(0),
+        )?;
+
+        log::debug!("Note count: {}", count);
+        Ok(count)
+    }
 }

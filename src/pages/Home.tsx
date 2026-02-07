@@ -5,7 +5,7 @@ import { useNoteStore } from '@/store/noteStore'
 
 export default function Home() {
   const navigate = useNavigate()
-  const { notes } = useNoteStore()
+  const { notes, notesCount } = useNoteStore()
 
   const handleCreateNote = () => {
     navigate('/editor/new')
@@ -43,7 +43,7 @@ export default function Home() {
             <FileText className="w-4 h-4" />
             笔记统计
           </h3>
-          <div className="text-2xl font-bold">{notes.length}</div>
+          <div className="text-2xl font-bold">{notesCount}</div>
           <p className="text-sm text-muted-foreground">
             篇笔记
           </p>

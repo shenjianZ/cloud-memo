@@ -209,15 +209,16 @@ pub async fn sync(
     let history_service = SyncHistoryService::new(state.pool.clone());
     let lock_service = SyncLockService::new(state.pool.clone());
 
-    // 获取操作锁（锁持续时间：30秒）
+    // 获取操作锁（使用 RAII Guard 自动释放）
+    // 锁持续时间：30秒（作为兜底，实际会在 sync 完成后立即释放）
     let device_id = req.device_id.as_deref().unwrap_or("unknown");
-    let lock_id = lock_service.acquire_lock(&user_id, device_id, 30).await
+    let _lock_guard = lock_service.acquire_guard(&user_id, device_id, 30).await
         .map_err(|e| {
             log_info(&request_id, "获取同步锁失败", &e.to_string());
             ErrorResponse::new(format!("获取同步锁失败: {}", e))
         })?;
 
-    log_info(&request_id, "获取同步锁成功", &format!("lock_id={}, device_id={}", lock_id, device_id));
+    log_info(&request_id, "获取同步锁成功", &format!("device_id={}", device_id));
 
     // 开始事务
     let mut tx = state.pool.begin().await.map_err(|e| {

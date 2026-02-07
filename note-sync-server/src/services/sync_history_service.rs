@@ -15,6 +15,10 @@ impl SyncHistoryService {
     }
 
     /// 创建同步历史记录
+    ///
+    /// 自动清理策略：
+    /// - 保留最近 1000 条记录
+    /// - 或保留最近 90 天的记录
     pub async fn create(
         &self,
         user_id: &str,
@@ -44,6 +48,15 @@ impl SyncHistoryService {
         .execute(&self.pool)
         .await?;
 
+        // 自动清理旧记录（在后台执行，不影响主流程）
+        let pool = self.pool.clone();
+        let user_id_clone = user_id.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = Self::cleanup_old_records(&pool, &user_id_clone).await {
+                tracing::warn!("清理同步历史失败: user_id={}, error={}", user_id_clone, e);
+            }
+        });
+
         Ok(SyncHistoryEntry {
             id,
             user_id: user_id.to_string(),
@@ -55,6 +68,73 @@ impl SyncHistoryService {
             duration_ms,
             created_at: now,
         })
+    }
+
+    /// 清理旧的同步历史记录
+    ///
+    /// 清理策略：
+    /// 1. 删除超过 90 天的记录
+    /// 2. 如果记录数超过 1000 条，删除最旧的记录
+    async fn cleanup_old_records(pool: &MySqlPool, user_id: &str) -> Result<()> {
+        let now = Utc::now().timestamp();
+        const MAX_RECORDS: i64 = 1000;
+        const RETENTION_DAYS: i64 = 90;
+
+        // 1. 删除超过 90 天的记录
+        let cutoff_timestamp = now - (RETENTION_DAYS * 24 * 60 * 60);
+        let deleted_old = sqlx::query(
+            "DELETE FROM sync_history WHERE user_id = ? AND created_at < ?"
+        )
+        .bind(user_id)
+        .bind(cutoff_timestamp)
+        .execute(pool)
+        .await?;
+
+        if deleted_old.rows_affected() > 0 {
+            tracing::info!(
+                "清理超过 {} 天的同步历史: user_id={}, deleted={}",
+                RETENTION_DAYS,
+                user_id,
+                deleted_old.rows_affected()
+            );
+        }
+
+        // 2. 检查记录总数，如果超过 1000 条，删除最旧的
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sync_history WHERE user_id = ?"
+        )
+        .bind(user_id)
+        .fetch_one(pool)
+        .await?;
+
+        if count > MAX_RECORDS {
+            let to_delete = count - MAX_RECORDS;
+
+            // 删除最旧的记录（保留最新的 1000 条）
+            let deleted_excess = sqlx::query(
+                "DELETE FROM sync_history
+                 WHERE user_id = ? AND id IN (
+                     SELECT id FROM sync_history
+                     WHERE user_id = ?
+                     ORDER BY created_at ASC
+                     LIMIT ?
+                 )"
+            )
+            .bind(user_id)
+            .bind(user_id)
+            .bind(to_delete)
+            .execute(pool)
+            .await?;
+
+            tracing::info!(
+                "清理多余的同步历史: user_id={}, count={}, deleted={}",
+                user_id,
+                count,
+                deleted_excess.rows_affected()
+            );
+        }
+
+        Ok(())
     }
 
     /// 获取用户的同步历史记录

@@ -109,23 +109,21 @@ impl NoteService {
     ///
     /// ## 行为
     ///
-    /// - 如果文件夹已存在，直接返回
+    /// - 如果文件夹已存在且未删除，直接返回
+    /// - 如果文件夹已存在但已删除，自动恢复后返回
     /// - 如果不存在，自动创建（sort_order = 9999）
     fn get_or_create_recovered_folder(&self) -> Result<Folder> {
         const RECOVERED_FOLDER_NAME: &str = "已恢复笔记";
         const RECOVERED_FOLDER_SORT_ORDER: i32 = 9999;  // 永远在最下边
 
-        // 尝试查找已存在的"已恢复笔记"文件夹
-        let all_folders = self.folder_repo.find_all()?;
-        if let Some(existing) = all_folders.iter().find(|f| f.name == RECOVERED_FOLDER_NAME) {
-            // 如果已存在但 sort_order 不正确，更新它
-            if existing.sort_order != RECOVERED_FOLDER_SORT_ORDER {
-                let mut updated = existing.clone();
-                updated.sort_order = RECOVERED_FOLDER_SORT_ORDER;
-                updated.updated_at = chrono::Utc::now().timestamp();
-                return self.folder_repo.update(&updated);
+        // 尝试查找已存在的"已恢复笔记"文件夹（包括已删除的）
+        if let Some(existing) = self.folder_repo.find_by_name_include_deleted(RECOVERED_FOLDER_NAME)? {
+            // 文件夹已存在，如果已删除则恢复
+            if existing.is_deleted {
+                log::info!("恢复已删除的文件夹 '{}'", RECOVERED_FOLDER_NAME);
+                return self.folder_repo.restore(&existing.id);
             }
-            return Ok(existing.clone());
+            return Ok(existing);
         }
 
         // 不存在则创建
@@ -208,5 +206,14 @@ impl NoteService {
         }
 
         Ok(moved_notes)
+    }
+
+    /// 获取笔记数量（不包括软删除的笔记）
+    ///
+    /// ## 返回
+    ///
+    /// 返回 `is_deleted = 0` 的笔记总数
+    pub fn count_notes(&self) -> Result<i64> {
+        self.repo.count()
     }
 }

@@ -226,3 +226,32 @@ pub async fn move_notes_to_folder(
             notes
         })
 }
+
+/// 获取笔记数量（不包括软删除的笔记）
+///
+/// ## 前端调用示例
+///
+/// ```typescript
+/// import { invoke } from '@tauri-apps/api/tauri';
+///
+/// // 获取笔记总数
+/// const count = await invoke<number>('get_notes_count');
+///
+/// console.log(`当前共有 ${count} 篇笔记`);
+/// ```
+#[tauri::command]
+pub async fn get_notes_count(
+    service: NoteSvc<'_>,
+) -> std::result::Result<i64, String> {
+    log::debug!("[commands/notes.rs::get_notes_count] 获取笔记数量");
+
+    service.count_notes()
+        .map_err(|e| {
+            log::error!("[commands/notes.rs::get_notes_count] 获取失败: {}", e);
+            e.to_string()
+        })
+        .map(|count| {
+            log::debug!("[commands/notes.rs::get_notes_count] 获取成功: count={}", count);
+            count
+        })
+}
