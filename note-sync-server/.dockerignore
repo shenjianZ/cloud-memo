@@ -1,6 +1,10 @@
-# Rust
+# Cargo
 target/
 Cargo.lock
+
+# Git
+.git/
+.gitignore
 
 # IDE
 .vscode/
@@ -13,15 +17,10 @@ Cargo.lock
 .DS_Store
 Thumbs.db
 
-# 构建输出
-*.tar.gz
+# 文档
+*.md
+!README.md
 
-# 日志
-*.log
-
-# 环境变量
+# 其他
 .env
-.env.local
-
-# 测试
-test_*
+*.log

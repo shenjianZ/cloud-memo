@@ -1,0 +1,19 @@
+[server]
+host = "0.0.0.0"
+port = 3000
+
+[database]
+# 生产环境数据库连接（请根据实际情况修改）
+url = "mysql://user:password@localhost:3306/notes-sync"
+max_connections = 20
+
+[auth]
+# 生产环境请使用更强的密钥
+jwt_secret = "CHANGE_THIS_TO_A_STRONG_SECRET_IN_PRODUCTION"
+jwt_expiration_days = 7
+
+[redis]
+# 生产环境 Redis 连接（请根据实际情况修改）
+url = "redis://localhost:6379"
+# Redis 密码（可选）
+# password = ""

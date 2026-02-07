@@ -12,11 +12,25 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use clap::Parser;
 use services::token_blacklist::TokenBlacklist;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
-use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+/// 命令行参数
+#[derive(clap::Parser)]
+#[command(name = "note-sync-server")]
+#[command(about = "Note sync server", long_about = None)]
+struct CliArgs {
+    /// 指定配置文件路径
+    #[arg(short, long)]
+    config: Option<String>,
+
+    /// 指定运行环境 (development/production)
+    #[arg(short = 'e', long)]
+    env: Option<String>,
+}
 
 /// 应用状态，包含数据库连接池和 Token 黑名单
 #[derive(Clone)]
@@ -28,8 +42,16 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // 解析命令行参数
+    let args = CliArgs::parse();
+
+    // 如果通过命令行指定了环境，设置环境变量
+    if let Some(env) = args.env {
+        std::env::set_var("CLOUDMEMO_ENV", env);
+    }
+
     // 加载配置
-    let config = config::AppConfig::load().expect("Failed to load configuration");
+    let config = config::AppConfig::load(args.config).expect("Failed to load configuration");
 
     // 初始化日志
     tracing_subscriber::registry()

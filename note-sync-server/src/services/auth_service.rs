@@ -98,7 +98,7 @@ impl AuthService {
     /// 完成注册后的 token 生成
     pub async fn complete_registration(&self, user_id: &str, email: &str, created_at: i64, device_id: Option<String>) -> Result<(User, String, String)> {
         // 生成 token
-        let config = crate::config::AppConfig::load()?;
+        let config = crate::config::AppConfig::load(None)?;
         let (access_token, refresh_token) = TokenService::generate_token_pair(user_id, config.auth.jwt_expiration_days, &config.auth.jwt_secret)?;
 
         // 保存 refresh_token 到数据库
@@ -159,7 +159,7 @@ impl AuthService {
         };
 
         // 6. 生成并保存 token
-        let config = crate::config::AppConfig::load()?;
+        let config = crate::config::AppConfig::load(None)?;
         let (access_token, refresh_token) = TokenService::generate_token_pair(&user_id, config.auth.jwt_expiration_days, &config.auth.jwt_secret)?;
         self.save_refresh_token(&user_id, &refresh_token, device_id.unwrap_or_else(|| "default".to_string())).await?;
 
@@ -192,7 +192,7 @@ impl AuthService {
             .map_err(|_| anyhow::anyhow!("邮箱或密码错误"))?;
 
         // 3. 生成 token
-        let config = crate::config::AppConfig::load()?;
+        let config = crate::config::AppConfig::load(None)?;
         let (access_token, refresh_token) = TokenService::generate_token_pair(&user.id, config.auth.jwt_expiration_days, &config.auth.jwt_secret)?;
 
         // 4. 保存 refresh_token 到数据库
@@ -277,7 +277,7 @@ impl AuthService {
         .ok_or_else(|| anyhow::anyhow!("用户不存在"))?;
 
         // 5. 生成新的 token
-        let config = crate::config::AppConfig::load()?;
+        let config = crate::config::AppConfig::load(None)?;
         let (access_token, new_refresh_token) = TokenService::generate_token_pair(&user.id, config.auth.jwt_expiration_days, &config.auth.jwt_secret)?;
 
         // 6. 保存新的 refresh_token（轮换策略）

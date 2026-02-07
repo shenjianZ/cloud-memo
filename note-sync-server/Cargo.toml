@@ -3,6 +3,14 @@ name = "note-sync-server"
 version = "0.1.0"
 edition = "2021"
 
+# 优化发布版本
+[profile.release]
+opt-level = "z"        # 优化大小
+lto = true            # 链接时优化
+codegen-units = 1     # 更好的优化
+strip = true          # 自动剥离符号
+panic = "abort"       # 减小 panic 处理大小
+
 [dependencies]
 # ===== Web 框架 =====
 axum = "0.7"
@@ -11,20 +19,31 @@ tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 
 # ===== 数据库（MySQL） =====
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "mysql", "chrono"] }
+# 1. default-features = false: 彻底禁用默认特性，防止引入 native-tls (OpenSSL)
+# 2. runtime-tokio-rustls: 强制使用纯 Rust 的 TLS 实现
+# 3. macros: 因为禁用了默认特性，需要手动加回 macros 才能使用 query! 等宏
+sqlx = { version = "0.7", default-features = false, features = [
+    "runtime-tokio-rustls", 
+    "mysql", 
+    "chrono", 
+    "macros" 
+] }
 
 # ===== 序列化 =====
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # ===== 认证与加密 =====
+# jsonwebtoken 和 argon2 通常包含 C 代码部分(ring)，但在 musl 环境下通常能正确静态编译
 jsonwebtoken = "9"
 argon2 = "0.5"
 sha2 = "0.10"
 md5 = "0.7"
 base64 = "0.22"
 
-# ===== Redis（Token 黑名单） =====
+# ===== Redis =====
+# 保持原样即可，除非你需要 Redis SSL 连接。
+# 如果需要 SSL，请务必使用 'tokio-rustls-comp' 而不是默认 TLS
 redis = { version = "0.24", features = ["tokio-comp", "connection-manager", "aio"] }
 
 # ===== 工具库 =====
@@ -35,4 +54,4 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 config = "0.13"
 rand = "0.8"
-
+clap = { version = "4", features = ["derive"] }
