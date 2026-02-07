@@ -146,3 +146,33 @@ export async function searchNotes(query: string): Promise<Note[]> {
 export async function getNotesCount(): Promise<number> {
   return invoke('get_notes_count');
 }
+
+/**
+ * 永久删除笔记（硬删除）
+ *
+ * @param id - 笔记 ID
+ *
+ * @example
+ * ```typescript
+ * await permanentlyDeleteNote('note-id-123');
+ * ```
+ */
+export async function permanentlyDeleteNote(id: string): Promise<void> {
+  return invoke('permanently_delete_note', { id });
+}
+
+/**
+ * 批量永久删除笔记（硬删除）
+ *
+ * @param noteIds - 笔记 ID 数组
+ * @returns 成功删除的笔记数量
+ *
+ * @example
+ * ```typescript
+ * const count = await permanentlyDeleteNotes(['note-id-1', 'note-id-2']);
+ * console.log(`已永久删除 ${count} 篇笔记`);
+ * ```
+ */
+export async function permanentlyDeleteNotes(noteIds: string[]): Promise<number> {
+  return invoke('permanently_delete_notes', { noteIds });
+}

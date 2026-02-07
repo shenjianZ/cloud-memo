@@ -441,4 +441,88 @@ impl FolderRepository {
             last_synced_at: row.get(12)?,
         })
     }
+
+    /// 硬删除文件夹（永久删除，包括子文件夹和所有笔记）
+    ///
+    /// ## 删除行为
+    ///
+    /// - 递归删除文件夹及其所有子文件夹
+    /// - 删除这些文件夹下的所有笔记（包括软删除的笔记）
+    /// - 外键约束会自动处理 `note_tags` 等关联数据
+    ///
+    /// ## 安全性
+    ///
+    /// - ⚠️ 此操作不可逆，会删除整个文件夹树
+    /// - ⚠️ 包括软删除的笔记也会被永久删除
+    pub fn hard_delete(&self, id: &str) -> Result<()> {
+        let conn = self.pool.get()?;
+
+        // 使用递归 CTE 查找所有子文件夹，然后删除
+        let affected = conn.execute(
+            "WITH RECURSIVE folder_tree AS (
+                -- 起始文件夹
+                SELECT id FROM folders WHERE id = ?1
+                UNION ALL
+                -- 子文件夹
+                SELECT f.id FROM folders f
+                INNER JOIN folder_tree ft ON f.parent_id = ft.id
+            )
+            -- 1. 删除文件夹树下的所有笔记（包括软删除的）
+            DELETE FROM notes WHERE folder_id IN folder_tree;
+
+            -- 2. 删除文件夹树
+            WITH RECURSIVE folder_tree AS (
+                SELECT id FROM folders WHERE id = ?1
+                UNION ALL
+                SELECT f.id FROM folders f
+                INNER JOIN folder_tree ft ON f.parent_id = ft.id
+            )
+            DELETE FROM folders WHERE id IN folder_tree",
+            params![id, id],
+        )?;
+
+        log::info!("[FolderRepository] 硬删除文件夹: id={}, affected={}", id, affected);
+        Ok(())
+    }
+
+    /// 清理超过指定天数的软删除文件夹
+    ///
+    /// ## 参数
+    ///
+    /// - `days`: 软删除后的保留天数（如 30 天）
+    ///
+    /// ## 返回
+    ///
+    /// 返回清理的文件夹数量
+    pub fn purge_old_deleted_folders(&self, days: i64) -> Result<i64> {
+        let conn = self.pool.get()?;
+        let cutoff_time = chrono::Utc::now().timestamp() - (days * 86400);
+
+        // 先删除这些文件夹下的所有笔记
+        let notes_affected = conn.execute(
+            "WITH RECURSIVE folder_tree AS (
+                SELECT id FROM folders WHERE is_deleted = 1 AND deleted_at < ?
+                UNION ALL
+                SELECT f.id FROM folders f
+                INNER JOIN folder_tree ft ON f.parent_id = ft.id
+            )
+            DELETE FROM notes WHERE folder_id IN folder_tree",
+            params![cutoff_time],
+        ).map_err(AppError::Database)?;
+
+        // 再删除文件夹
+        let folders_affected = conn.execute(
+            "WITH RECURSIVE folder_tree AS (
+                SELECT id FROM folders WHERE is_deleted = 1 AND deleted_at < ?
+                UNION ALL
+                SELECT f.id FROM folders f
+                INNER JOIN folder_tree ft ON f.parent_id = ft.id
+            )
+            DELETE FROM folders WHERE id IN folder_tree",
+            params![cutoff_time],
+        ).map_err(AppError::Database)?;
+
+        log::info!("[FolderRepository] 清理旧文件夹: days={}, folders={}, notes={}", days, folders_affected, notes_affected);
+        Ok(folders_affected as i64)
+    }
 }

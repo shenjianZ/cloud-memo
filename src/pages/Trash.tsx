@@ -11,7 +11,7 @@ import {
   AlertCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { listDeletedNotes } from '@/services/noteApi'
+import { listDeletedNotes, permanentlyDeleteNote, permanentlyDeleteNotes } from '@/services/noteApi'
 
 interface Note {
   id: string
@@ -42,6 +42,7 @@ export default function Trash() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [isLoading, setIsLoading] = useState(true)
   const [isRestoring, setIsRestoring] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   // 加载回收站笔记
   useEffect(() => {
@@ -117,6 +118,58 @@ export default function Trash() {
     }
   }
 
+  // 单个硬删除
+  const handlePermanentDelete = async (id: string) => {
+    if (!confirm('确定要永久删除这篇笔记吗？此操作无法撤销！')) {
+      return
+    }
+
+    setIsDeleting(true)
+    try {
+      await permanentlyDeleteNote(id)
+      setTrashNotes((prev) => prev.filter((n) => n.id !== id))
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+      toast.success('笔记已永久删除')
+    } catch (error) {
+      toast.error('删除失败', {
+        description: error instanceof Error ? error.message : '未知错误',
+      })
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
+  // 批量硬删除
+  const handleBatchPermanentDelete = async () => {
+    if (selectedIds.size === 0) {
+      toast.warning('请先选择要删除的笔记')
+      return
+    }
+
+    if (!confirm(`确定要永久删除选中的 ${selectedIds.size} 篇笔记吗？此操作无法撤销！`)) {
+      return
+    }
+
+    setIsDeleting(true)
+    try {
+      const ids = Array.from(selectedIds)
+      const count = await permanentlyDeleteNotes(ids)
+      setTrashNotes((prev) => prev.filter((n) => !selectedIds.has(n.id)))
+      setSelectedIds(new Set())
+      toast.success(`已永久删除 ${count} 篇笔记`)
+    } catch (error) {
+      toast.error('批量删除失败', {
+        description: error instanceof Error ? error.message : '未知错误',
+      })
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
   // 切换选择状态
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -167,11 +220,19 @@ export default function Trash() {
               <>
                 <button
                   onClick={handleBatchRestore}
-                  disabled={isRestoring}
+                  disabled={isRestoring || isDeleting}
                   className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                 >
                   <RotateCcw className="h-4 w-4" />
                   恢复选中 ({selectedIds.size})
+                </button>
+                <button
+                  onClick={handleBatchPermanentDelete}
+                  disabled={isDeleting}
+                  className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  永久删除选中 ({selectedIds.size})
                 </button>
                 <button
                   onClick={() => setSelectedIds(new Set())}
@@ -256,15 +317,27 @@ export default function Trash() {
                 )}
               </div>
 
-              {/* 恢复按钮 */}
-              <button
-                onClick={() => handleRestore(note.id)}
-                disabled={isRestoring}
-                className="flex-shrink-0 rounded-lg p-2 text-muted-foreground transition-colors hover:bg-green-100 hover:text-green-700 disabled:opacity-50"
-                title="恢复笔记"
-              >
-                <RotateCcw className="h-5 w-5" />
-              </button>
+              {/* 操作按钮 */}
+              <div className="flex gap-1">
+                {/* 恢复按钮 */}
+                <button
+                  onClick={() => handleRestore(note.id)}
+                  disabled={isRestoring || isDeleting}
+                  className="flex-shrink-0 rounded-lg p-2 text-muted-foreground transition-colors hover:bg-green-100 hover:text-green-700 disabled:opacity-50"
+                  title="恢复笔记"
+                >
+                  <RotateCcw className="h-5 w-5" />
+                </button>
+                {/* 硬删除按钮 */}
+                <button
+                  onClick={() => handlePermanentDelete(note.id)}
+                  disabled={isDeleting}
+                  className="flex-shrink-0 rounded-lg p-2 text-muted-foreground transition-colors hover:bg-red-100 hover:text-red-700 disabled:opacity-50"
+                  title="永久删除"
+                >
+                  <Trash2 className="h-5 w-5" />
+                </button>
+              </div>
             </div>
           ))}
         </div>

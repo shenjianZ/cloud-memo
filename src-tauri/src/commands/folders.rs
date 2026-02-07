@@ -134,3 +134,21 @@ pub async fn get_folder_path(
             path
         })
 }
+
+/// 永久删除文件夹（硬删除）
+#[tauri::command]
+pub async fn permanently_delete_folder(
+    id: String,
+    service: FolderSvc<'_>,
+) -> std::result::Result<(), String> {
+    log::info!("[commands/folders.rs::permanently_delete_folder] 永久删除文件夹: id={}", id);
+
+    service.permanently_delete_folder(&id)
+        .map_err(|e| {
+            log::error!("[commands/folders.rs::permanently_delete_folder] 删除失败: id={}, error={}", id, e);
+            e.to_string()
+        })
+        .map(|_| {
+            log::info!("[commands/folders.rs::permanently_delete_folder] 删除成功: id={}", id);
+        })
+}

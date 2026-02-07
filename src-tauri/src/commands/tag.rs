@@ -170,3 +170,40 @@ pub async fn set_note_tags(
             log::info!("[commands/tag.rs::set_note_tags] 设置成功: note_id={}", note_id);
         })
 }
+
+/// 永久删除标签（硬删除）
+#[tauri::command]
+pub async fn permanently_delete_tag(
+    id: String,
+    service: TagSvc<'_>,
+) -> std::result::Result<(), String> {
+    log::info!("[commands/tag.rs::permanently_delete_tag] 永久删除标签: id={}", id);
+
+    service.permanently_delete_tag(&id)
+        .map_err(|e| {
+            log::error!("[commands/tag.rs::permanently_delete_tag] 删除失败: id={}, error={}", id, e);
+            e.to_string()
+        })
+        .map(|_| {
+            log::info!("[commands/tag.rs::permanently_delete_tag] 删除成功: id={}", id);
+        })
+}
+
+/// 批量永久删除标签
+#[tauri::command]
+pub async fn permanently_delete_tags(
+    tag_ids: Vec<String>,
+    service: TagSvc<'_>,
+) -> std::result::Result<i64, String> {
+    log::info!("[commands/tag.rs::permanently_delete_tags] 批量永久删除标签: count={}", tag_ids.len());
+
+    service.permanently_delete_tags(tag_ids)
+        .map_err(|e| {
+            log::error!("[commands/tag.rs::permanently_delete_tags] 批量删除失败: {}", e);
+            e.to_string()
+        })
+        .map(|count| {
+            log::info!("[commands/tag.rs::permanently_delete_tags] 批量删除成功: count={}", count);
+            count
+        })
+}

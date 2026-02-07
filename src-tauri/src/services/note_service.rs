@@ -6,6 +6,7 @@ use crate::models::error::{Result, AppError};
 /// 笔记业务逻辑层
 ///
 /// 处理笔记相关的业务逻辑，调用 Repository 进行数据操作
+#[derive(Clone)]
 pub struct NoteService {
     repo: NoteRepository,
     folder_repo: FolderRepository,  // 用于恢复笔记时创建/获取"已恢复笔记"文件夹
@@ -216,4 +217,39 @@ impl NoteService {
     pub fn count_notes(&self) -> Result<i64> {
         self.repo.count()
     }
+
+    /// 永久删除笔记（硬删除）
+    ///
+    /// ## 行为
+    ///
+    /// - 物理删除笔记记录
+    /// - FTS 索引自动同步删除
+    /// - 笔记标签关联自动级联删除
+    /// - **不会触发云端同步**（硬删除的数据不再同步）
+    pub fn permanently_delete_note(&self, id: &str) -> Result<()> {
+        self.repo.hard_delete(id)
+    }
+
+    /// 批量永久删除笔记
+    ///
+    /// ## 返回
+    ///
+    /// 返回成功删除的笔记数量
+    pub fn permanently_delete_notes(&self, note_ids: Vec<String>) -> Result<i64> {
+        if note_ids.is_empty() {
+            return Ok(0);
+        }
+        self.repo.hard_delete_batch(&note_ids)
+    }
+
+    /// 清理超过 30 天的软删除笔记
+    ///
+    /// ## 返回
+    ///
+    /// 返回清理的笔记数量
+    pub fn purge_old_deleted_notes(&self) -> Result<i64> {
+        const PURGE_AFTER_DAYS: i64 = 30;
+        self.repo.purge_old_deleted_notes(PURGE_AFTER_DAYS)
+    }
 }
+

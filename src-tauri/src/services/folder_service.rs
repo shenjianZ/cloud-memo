@@ -5,6 +5,7 @@ use crate::models::error::{Result, AppError};
 /// 文件夹业务逻辑层
 ///
 /// 处理文件夹相关的业务逻辑，调用 Repository 进行数据操作
+#[derive(Clone)]
 pub struct FolderService {
     repo: FolderRepository,
 }
@@ -156,4 +157,31 @@ impl FolderService {
         // 这个方法需要 NoteRepository，实际实现在组合服务中
         Err(AppError::NotFound("Use NoteService to get folder notes".to_string()))
     }
+
+    /// 永久删除文件夹（硬删除，包括子文件夹和所有笔记）
+    ///
+    /// ## 删除行为
+    ///
+    /// - 递归删除文件夹及其所有子文件夹
+    /// - 删除这些文件夹下的所有笔记（包括软删除的笔记）
+    /// - 外键约束会自动处理 `note_tags` 等关联数据
+    ///
+    /// ## 安全性
+    ///
+    /// - ⚠️ 此操作不可逆，会删除整个文件夹树
+    /// - ⚠️ 包括软删除的笔记也会被永久删除
+    pub fn permanently_delete_folder(&self, id: &str) -> Result<()> {
+        self.repo.hard_delete(id)
+    }
+
+    /// 清理超过 30 天的软删除文件夹
+    ///
+    /// ## 返回
+    ///
+    /// 返回清理的文件夹数量
+    pub fn purge_old_deleted_folders(&self) -> Result<i64> {
+        const PURGE_AFTER_DAYS: i64 = 30;
+        self.repo.purge_old_deleted_folders(PURGE_AFTER_DAYS)
+    }
 }
+

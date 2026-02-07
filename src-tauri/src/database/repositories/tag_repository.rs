@@ -246,4 +246,74 @@ impl TagRepository {
 
         Ok(())
     }
+
+    /// 硬删除标签（永久删除）
+    ///
+    /// ## 删除行为
+    ///
+    /// - 从 `tags` 表中物理删除记录
+    /// - 外键约束会自动删除 `note_tags` 中的关联记录
+    pub fn hard_delete(&self, id: &str) -> Result<()> {
+        let conn = self.pool.get()?;
+
+        let rows_affected = conn.execute(
+            "DELETE FROM tags WHERE id = ?",
+            params![id],
+        )?;
+
+        if rows_affected == 0 {
+            return Err(AppError::NotFound(format!("Tag {} not found", id)));
+        }
+
+        log::info!("[TagRepository] 硬删除标签: id={}", id);
+        Ok(())
+    }
+
+    /// 批量硬删除标签
+    ///
+    /// ## 返回
+    ///
+    /// 返回成功删除的标签数量
+    pub fn hard_delete_batch(&self, ids: &[String]) -> Result<i64> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.pool.get()?;
+
+        let sql = format!(
+            "DELETE FROM tags WHERE id IN ({})",
+            ids.iter().map(|_| "?").collect::<Vec<_>>().join(",")
+        );
+
+        let params: Vec<&dyn r2d2_sqlite::rusqlite::ToSql> = ids.iter().map(|s| s as &dyn r2d2_sqlite::rusqlite::ToSql).collect();
+
+        let rows_affected = conn.execute(&sql, params.as_slice())
+            .map_err(AppError::Database)?;
+
+        log::info!("[TagRepository] 批量硬删除标签: count={}", rows_affected);
+        Ok(rows_affected as i64)
+    }
+
+    /// 清理超过指定天数的软删除标签
+    ///
+    /// ## 参数
+    ///
+    /// - `days`: 软删除后的保留天数（如 30 天）
+    ///
+    /// ## 返回
+    ///
+    /// 返回清理的标签数量
+    pub fn purge_old_deleted_tags(&self, days: i64) -> Result<i64> {
+        let conn = self.pool.get()?;
+        let cutoff_time = chrono::Utc::now().timestamp() - (days * 86400);
+
+        let rows_affected = conn.execute(
+            "DELETE FROM tags WHERE is_deleted = 1 AND deleted_at < ?",
+            params![cutoff_time],
+        ).map_err(AppError::Database)?;
+
+        log::info!("[TagRepository] 清理旧标签: days={}, count={}", days, rows_affected);
+        Ok(rows_affected as i64)
+    }
 }

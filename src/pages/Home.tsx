@@ -5,7 +5,7 @@ import { useNoteStore } from '@/store/noteStore'
 
 export default function Home() {
   const navigate = useNavigate()
-  const { notes, notesCount } = useNoteStore()
+  const { notesCount } = useNoteStore()
 
   const handleCreateNote = () => {
     navigate('/editor/new')

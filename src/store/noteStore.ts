@@ -119,8 +119,8 @@ interface NoteStore {
     createNote: (note: Partial<Note>) => Promise<Note>;
     updateNote: (id: string, updates: Partial<Note>) => Promise<void>;
     deleteNote: (id: string) => Promise<void>;
-    restoreNote: (id: string) => Promise<Note>; // 恢复单个笔记
-    restoreNotes: (ids: string[]) => Promise<Note[]>; // 批量恢复笔记
+    restoreNote: (id: string) => Promise<void>; // 恢复单个笔记
+    restoreNotes: (ids: string[]) => Promise<void>; // 批量恢复笔记
     duplicateNote: (id: string) => Promise<Note>;
     exportNote: (id: string) => Promise<void>;
 
@@ -250,7 +250,7 @@ export const useNoteStore = create<NoteStore>()(
             restoreNote: async (id) => {
                 set({ isLoading: true });
                 try {
-                    const apiNote = await noteApi.restoreNote(id);
+                    await noteApi.restoreNote(id);
 
                     // 重新加载所有笔记和文件夹（确保显示恢复的"已恢复笔记"文件夹）
                     await get().loadNotesFromStorage();
@@ -262,8 +262,6 @@ export const useNoteStore = create<NoteStore>()(
                     toast.success("笔记已恢复", {
                         description: "已添加到笔记列表",
                     });
-
-                    return apiNote;
                 } catch (error) {
                     console.error("Failed to restore note:", error);
                     set({ isLoading: false });
@@ -290,8 +288,6 @@ export const useNoteStore = create<NoteStore>()(
                     toast.success(`已恢复 ${apiNotes.length} 篇笔记`, {
                         description: "已添加到笔记列表",
                     });
-
-                    return apiNotes;
                 } catch (error) {
                     console.error("Failed to restore notes:", error);
                     set({ isLoading: false });

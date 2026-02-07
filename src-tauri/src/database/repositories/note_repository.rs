@@ -6,6 +6,7 @@ use r2d2_sqlite::rusqlite::params;
 /// 笔记数据访问层
 ///
 /// 负责所有与笔记相关的数据库操作
+#[derive(Clone)]
 pub struct NoteRepository {
     pool: DbPool,
 }
@@ -321,5 +322,84 @@ impl NoteRepository {
 
         log::debug!("Note count: {}", count);
         Ok(count)
+    }
+
+    /// 硬删除笔记（永久删除，不可恢复）
+    ///
+    /// ## 删除行为
+    ///
+    /// - 从 `notes` 表中物理删除记录
+    /// - FTS 触发器会自动删除 `notes_fts` 中的索引
+    /// - 外键约束会自动删除 `note_tags` 中的关联记录
+    /// - **不会触发同步**（硬删除的数据不再同步）
+    ///
+    /// ## 安全性
+    ///
+    /// - ⚠️ 此操作不可逆，请谨慎使用
+    /// - ✅ FTS 索引会自动同步删除（触发器: `notes_ad`）
+    /// - ✅ 笔记标签关联会自动级联删除（外键: `ON DELETE CASCADE`）
+    pub fn hard_delete(&self, id: &str) -> Result<()> {
+        let conn = self.pool.get()?;
+
+        let rows_affected = conn.execute(
+            "DELETE FROM notes WHERE id = ?",
+            params![id],
+        )?;
+
+        if rows_affected == 0 {
+            return Err(AppError::NotFound(format!("Note {} not found", id)));
+        }
+
+        log::info!("[NoteRepository] 硬删除笔记: id={}", id);
+        Ok(())
+    }
+
+    /// 批量硬删除笔记
+    ///
+    /// ## 返回
+    ///
+    /// 返回成功删除的笔记数量
+    pub fn hard_delete_batch(&self, ids: &[String]) -> Result<i64> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.pool.get()?;
+
+        // 使用 IN 批量删除
+        let sql = format!(
+            "DELETE FROM notes WHERE id IN ({})",
+            ids.iter().map(|_| "?").collect::<Vec<_>>().join(",")
+        );
+
+        let params: Vec<&dyn r2d2_sqlite::rusqlite::ToSql> = ids.iter().map(|s| s as &dyn r2d2_sqlite::rusqlite::ToSql).collect();
+
+        let rows_affected = conn.execute(&sql, params.as_slice())
+            .map_err(AppError::Database)?;
+
+        log::info!("[NoteRepository] 批量硬删除笔记: count={}", rows_affected);
+        Ok(rows_affected as i64)
+    }
+
+    /// 清理超过指定天数的软删除笔记
+    ///
+    /// ## 参数
+    ///
+    /// - `days`: 软删除后的保留天数（如 30 天）
+    ///
+    /// ## 返回
+    ///
+    /// 返回清理的笔记数量
+    pub fn purge_old_deleted_notes(&self, days: i64) -> Result<i64> {
+        let conn = self.pool.get()?;
+        let cutoff_time = chrono::Utc::now().timestamp() - (days * 86400);
+
+        let rows_affected = conn.execute(
+            "DELETE FROM notes WHERE is_deleted = 1 AND deleted_at < ?",
+            params![cutoff_time],
+        ).map_err(AppError::Database)?;
+
+        log::info!("[NoteRepository] 清理旧笔记: days={}, count={}", days, rows_affected);
+        Ok(rows_affected as i64)
     }
 }

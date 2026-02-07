@@ -9,7 +9,7 @@ use database::repositories::{
     EditorSettingsRepository, FolderRepository, KeybindingRepository, NoteRepository,
     TagRepository, UserProfileRepository,
 };
-use services::{AppSettingsService, AuthService, AutoSyncService, SnapshotService, SyncService, SingleSyncService, UserProfileService};
+use services::{AppSettingsService, AuthService, AutoSyncService, CleanupService, SnapshotService, SyncService, SingleSyncService, UserProfileService};
 use services::{EditorSettingsService, FolderService, KeybindingService, NoteService, TagService};
 use tauri::Manager;
 
@@ -93,6 +93,14 @@ pub fn run() {
             let app_settings_service = AppSettingsService::new(pool.clone());
             let auto_sync_service = AutoSyncService::new(sync_service.clone(), app_settings_service.clone());
 
+            // 自动清理服务（需要 NoteService、FolderService、TagService、DbPool）
+            let cleanup_service = CleanupService::new(
+                note_service.clone(),
+                folder_service.clone(),
+                tag_service.clone(),
+                pool.clone(),
+            );
+
             // 认证服务
             let auth_service = AuthService::new(pool.clone());
 
@@ -117,6 +125,8 @@ pub fn run() {
             app.manage(auth_service.clone()); // 克隆以便后续使用
             app.manage(snapshot_service);
             app.manage(user_profile_service);
+            // ===== 自动清理服务 =====
+            app.manage(cleanup_service.clone()); // 克隆以便后续使用
 
             log::info!("Application services initialized");
 
@@ -139,6 +149,27 @@ pub fn run() {
                     log::warn!("[App Startup] 检查本地登录状态失败: {}", e);
                 }
             }
+
+            // ===== 应用启动时检查并执行清理 =====
+            log::info!("[App Startup] 检查是否需要清理软删除数据");
+            let cleanup_for_startup = cleanup_service.clone();
+            tauri::async_runtime::spawn(async move {
+                match cleanup_for_startup.startup_cleanup().await {
+                    Ok(stats) => {
+                        if stats.notes > 0 || stats.folders > 0 || stats.tags > 0 {
+                            log::info!(
+                                "[App Startup] 自动清理完成: notes={}, folders={}, tags={}",
+                                stats.notes,
+                                stats.folders,
+                                stats.tags
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("[App Startup] 自动清理失败: {}", e);
+                    }
+                }
+            });
 
             // 开发模式下自动打开开发者工具
             #[cfg(debug_assertions)]
@@ -167,6 +198,8 @@ pub fn run() {
             commands::search_notes,
             commands::move_notes_to_folder,
             commands::get_notes_count,
+            commands::permanently_delete_note,
+            commands::permanently_delete_notes,
             // 文件夹命令
             commands::create_folder,
             commands::get_folder,
@@ -175,6 +208,7 @@ pub fn run() {
             commands::list_folders,
             commands::move_folder,
             commands::get_folder_path,
+            commands::permanently_delete_folder,
             // 快捷键命令
             commands::load_keybindings,
             commands::save_keybindings,
@@ -193,6 +227,8 @@ pub fn run() {
             commands::add_tag_to_note,
             commands::remove_tag_from_note,
             commands::set_note_tags,
+            commands::permanently_delete_tag,
+            commands::permanently_delete_tags,
             // ===== 云端同步命令 =====
             commands::sync_now,
             commands::get_sync_status,

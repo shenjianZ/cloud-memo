@@ -227,6 +227,43 @@ pub async fn move_notes_to_folder(
         })
 }
 
+/// 永久删除笔记（硬删除）
+#[tauri::command]
+pub async fn permanently_delete_note(
+    id: String,
+    service: NoteSvc<'_>,
+) -> std::result::Result<(), String> {
+    log::info!("[commands/notes.rs::permanently_delete_note] 永久删除笔记: id={}", id);
+
+    service.permanently_delete_note(&id)
+        .map_err(|e| {
+            log::error!("[commands/notes.rs::permanently_delete_note] 删除失败: id={}, error={}", id, e);
+            e.to_string()
+        })
+        .map(|_| {
+            log::info!("[commands/notes.rs::permanently_delete_note] 删除成功: id={}", id);
+        })
+}
+
+/// 批量永久删除笔记
+#[tauri::command]
+pub async fn permanently_delete_notes(
+    note_ids: Vec<String>,
+    service: NoteSvc<'_>,
+) -> std::result::Result<i64, String> {
+    log::info!("[commands/notes.rs::permanently_delete_notes] 批量永久删除笔记: count={}", note_ids.len());
+
+    service.permanently_delete_notes(note_ids)
+        .map_err(|e| {
+            log::error!("[commands/notes.rs::permanently_delete_notes] 批量删除失败: {}", e);
+            e.to_string()
+        })
+        .map(|count| {
+            log::info!("[commands/notes.rs::permanently_delete_notes] 批量删除成功: count={}", count);
+            count
+        })
+}
+
 /// 获取笔记数量（不包括软删除的笔记）
 ///
 /// ## 前端调用示例

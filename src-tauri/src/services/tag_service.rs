@@ -1,6 +1,7 @@
 use crate::database::repositories::TagRepository;
 use crate::models::{Tag, CreateTagRequest, UpdateTagRequest, NoteTagRequest, error::{Result, AppError}};
 
+#[derive(Clone)]
 pub struct TagService {
     repo: TagRepository,
 }
@@ -54,5 +55,37 @@ impl TagService {
     /// 设置笔记的标签（替换所有标签）
     pub fn set_note_tags(&self, note_id: &str, tag_ids: Vec<String>) -> Result<()> {
         self.repo.set_note_tags(note_id, &tag_ids)
+    }
+
+    /// 永久删除标签（硬删除）
+    ///
+    /// ## 删除行为
+    ///
+    /// - 从 `tags` 表中物理删除记录
+    /// - 外键约束会自动删除 `note_tags` 中的关联记录
+    pub fn permanently_delete_tag(&self, id: &str) -> Result<()> {
+        self.repo.hard_delete(id)
+    }
+
+    /// 批量永久删除标签
+    ///
+    /// ## 返回
+    ///
+    /// 返回成功删除的标签数量
+    pub fn permanently_delete_tags(&self, tag_ids: Vec<String>) -> Result<i64> {
+        if tag_ids.is_empty() {
+            return Ok(0);
+        }
+        self.repo.hard_delete_batch(&tag_ids)
+    }
+
+    /// 清理超过 30 天的软删除标签
+    ///
+    /// ## 返回
+    ///
+    /// 返回清理的标签数量
+    pub fn purge_old_deleted_tags(&self) -> Result<i64> {
+        const PURGE_AFTER_DAYS: i64 = 30;
+        self.repo.purge_old_deleted_tags(PURGE_AFTER_DAYS)
     }
 }
