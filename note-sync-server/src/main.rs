@@ -68,16 +68,27 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::create_pool(&config.database).await?;
 
     // 构建 Redis 连接字符串（支持可选密码）
-    let redis_url = if let Some(password) = &config.redis.password {
-        // 有密码：redis://:password@host:port
+    let redis_url = {
         let url = &config.redis.url;
-        if url.starts_with("redis://") {
-            format!("redis://:{}{}", password, &url[8..])
-        } else {
-            config.redis.url.clone()
+
+        // 如果 URL 中已经包含密码（:password@），直接使用
+        if url.contains("@") {
+            url.clone()
         }
-    } else {
-        config.redis.url.clone()
+        // 如果有 password 字段，添加到 URL
+        else if let Some(password) = &config.redis.password {
+            if password.is_empty() {
+                url.clone()
+            } else if url.starts_with("redis://") {
+                format!("redis://:{}{}", password, &url[8..])
+            } else {
+                url.clone()
+            }
+        }
+        // 否则直接使用 URL
+        else {
+            url.clone()
+        }
     };
 
     // 初始化 Redis Token 黑名单
