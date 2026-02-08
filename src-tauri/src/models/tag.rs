@@ -7,6 +7,11 @@ pub struct Tag {
     pub id: String,  // 标签唯一标识（UUID）
     pub name: String,  // 标签名称
     pub color: Option<String>,  // 标签颜色（十六进制或颜色名）
+
+    // ===== 工作空间支持 =====
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,  // 工作空间 ID（支持多工作空间）
+
     pub created_at: i64,  // 创建时间（Unix 时间戳，秒）
     pub updated_at: i64,  // 更新时间（Unix 时间戳，秒）
     #[serde(default)]

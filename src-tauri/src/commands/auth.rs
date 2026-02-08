@@ -133,8 +133,13 @@ pub async fn list_accounts(
 pub async fn switch_account(
     user_id: String,
     service: AuthSvc<'_>,
+    auto_sync: AutoSyncSvc<'_>,
 ) -> std::result::Result<(), String> {
     log::info!("[commands/auth.rs::switch_account] 切换账号: user_id={}", user_id);
+
+    // 先停止自动同步（防止正在进行的同步使用错误的账号数据）
+    log::info!("[commands/auth.rs::switch_account] 停止自动同步服务");
+    auto_sync.stop().await;
 
     service.switch_account(&user_id)
         .map_err(|e| {
@@ -143,7 +148,15 @@ pub async fn switch_account(
         })
         .map(|_| {
             log::info!("[commands/auth.rs::switch_account] 切换成功: user_id={}", user_id);
-        })
+        })?;
+
+    // 重新启动自动同步（使用新账号）
+    log::info!("[commands/auth.rs::switch_account] 启动新账号的自动同步");
+    if let Err(e) = auto_sync.start().await {
+        log::warn!("[commands/auth.rs::switch_account] 启动自动同步服务失败: {}", e);
+    }
+
+    Ok(())
 }
 
 /// 删除指定账号

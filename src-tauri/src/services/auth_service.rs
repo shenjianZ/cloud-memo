@@ -119,6 +119,49 @@ impl AuthService {
             log::warn!("[AuthService::login] 初始化用户资料失败（非致命错误）: {}", e);
         }
 
+        // 确保默认工作空间存在
+        log::debug!("[AuthService::login] 检查默认工作空间: user_id={}", auth_response.user_id);
+        use crate::services::WorkspaceService;
+        use crate::database::repositories::WorkspaceRepository;
+
+        let workspace_service = WorkspaceService::new(WorkspaceRepository::new(self.pool.clone()));
+        let default_workspace = workspace_service.get_default_workspace(&auth_response.user_id);
+
+        if default_workspace.is_err() {
+            // 默认工作空间不存在，创建一个
+            log::info!("[AuthService::login] 默认工作空间不存在，创建中: user_id={}", auth_response.user_id);
+
+            // 直接使用 repository 创建默认工作空间（绕过 create_workspace 的用户 ID 验证）
+            use crate::models::Workspace;
+            let new_default_workspace = Workspace::new_with_default(
+                auth_response.user_id.clone(),
+                "我的空间".to_string(),
+                None,
+                None,
+                None,
+                true,  // is_default = true
+            );
+
+            let repo = WorkspaceRepository::new(self.pool.clone());
+            match repo.create(&new_default_workspace) {
+                Ok(workspace) => {
+                    log::info!("[AuthService::login] 默认工作空间创建成功: user_id={}, workspace_id={}", auth_response.user_id, workspace.id);
+
+                    // 设置为当前工作空间
+                    if let Err(e) = repo.set_current(&auth_response.user_id, &workspace.id) {
+                        log::warn!("[AuthService::login] 设置默认工作空间为当前空间失败（非致命错误）: {}", e);
+                    } else {
+                        log::info!("[AuthService::login] 默认工作空间已设置为当前空间: workspace_id={}", workspace.id);
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[AuthService::login] 创建默认工作空间失败（非致命错误）: {}", e);
+                }
+            }
+        } else {
+            log::debug!("[AuthService::login] 默认工作空间已存在: user_id={}", auth_response.user_id);
+        }
+
         Ok(auth_response)
     }
 
@@ -224,6 +267,37 @@ impl AuthService {
         );
         if let Err(e) = profile_service.init_profile(&auth_response.user_id) {
             log::warn!("[AuthService::register] 初始化用户资料失败（非致命错误）: {}", e);
+        }
+
+        // 创建默认工作空间
+        log::debug!("[AuthService::register] 创建默认工作空间: user_id={}", auth_response.user_id);
+        use crate::database::repositories::WorkspaceRepository;
+        use crate::models::Workspace;
+
+        let default_workspace = Workspace::new_with_default(
+            auth_response.user_id.clone(),
+            "我的空间".to_string(),
+            None,
+            None,
+            None,
+            true,  // is_default = true
+        );
+
+        let repo = WorkspaceRepository::new(self.pool.clone());
+        match repo.create(&default_workspace) {
+            Ok(workspace) => {
+                log::info!("[AuthService::register] 默认工作空间创建成功: user_id={}, workspace_id={}", auth_response.user_id, workspace.id);
+
+                // 设置为当前工作空间
+                if let Err(e) = repo.set_current(&auth_response.user_id, &workspace.id) {
+                    log::warn!("[AuthService::register] 设置默认工作空间为当前空间失败（非致命错误）: {}", e);
+                } else {
+                    log::info!("[AuthService::register] 默认工作空间已设置为当前空间: workspace_id={}", workspace.id);
+                }
+            }
+            Err(e) => {
+                log::warn!("[AuthService::register] 创建默认工作空间失败（非致命错误）: {}", e);
+            }
         }
 
         Ok(auth_response)

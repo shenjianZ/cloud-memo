@@ -1,7 +1,11 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import * as authApi from '@/services/authApi'
+import { migrateOrphanDataToWorkspace } from '@/services/workspaceApi'
 import { useProfileStore } from './profileStore'
+import { useWorkspaceStore } from './workspaceStore'
+import { useNoteStore } from './noteStore'
+import { useTagStore } from './tagStore'
 import type { User, AccountWithProfile } from '@/types/auth'
 
 interface AuthState {
@@ -48,10 +52,52 @@ export const useAuthStore = create<AuthState>()(
             serverUrl: serverUrlToUse,
             deviceId: '',
           }
-          set({ user, isAuthenticated: true, isLoading: false })
 
-          // 登录成功后，刷新账号列表
-          get().listAccounts()
+          // ⚠️ 重要：登录成功后，像 switchAccount 一样加载所有业务数据
+          console.log('[authStore] 登录成功，开始加载业务数据')
+
+          // 1. 加载用户资料
+          const profileStore = useProfileStore.getState()
+          await profileStore.fetchProfile()
+          console.log('[authStore] 用户资料加载成功')
+
+          // 2. 加载工作空间（必须先加载，因为其他数据依赖它）
+          const workspaceStore = useWorkspaceStore.getState()
+          await workspaceStore.loadWorkspaces()
+          await workspaceStore.loadCurrentWorkspace()
+          console.log('[authStore] 工作空间加载成功，当前工作空间:', workspaceStore.currentWorkspace?.name)
+
+          // 🆕 迁移孤立数据到当前工作空间（未登录时创建的数据）
+          if (workspaceStore.currentWorkspace) {
+            try {
+              const migrateResult = await migrateOrphanDataToWorkspace(workspaceStore.currentWorkspace.id)
+              console.log('[authStore] 孤立数据迁移完成:', migrateResult)
+              if (migrateResult.notes > 0 || migrateResult.folders > 0 || migrateResult.tags > 0 || migrateResult.snapshots > 0) {
+                console.log(`[authStore] 迁移统计: ${migrateResult.notes} 条笔记, ${migrateResult.folders} 个文件夹, ${migrateResult.tags} 个标签, ${migrateResult.snapshots} 个快照`)
+              }
+            } catch (migrateError) {
+              console.warn('[authStore] 迁移孤立数据失败（非致命错误）:', migrateError)
+              // 迁移失败不影响登录流程，继续执行
+            }
+          }
+
+          // 3. 加载笔记和文件夹
+          const noteStore = useNoteStore.getState()
+          await noteStore.loadNotesFromStorage()
+          console.log('[authStore] 笔记和文件夹加载成功')
+
+          // 4. 加载标签
+          const tagStore = useTagStore.getState()
+          await tagStore.loadTags()
+          console.log('[authStore] 标签加载成功')
+
+          console.log('[authStore] 所有业务数据加载完成')
+
+          // 5. 刷新账号列表
+          await get().listAccounts()
+
+          set({ user, isAuthenticated: true, isLoading: false })
+          console.log('[authStore] 用户状态已更新')
         } catch (error) {
           // Tauri 返回的错误是 string 类型
           const errorMsg = typeof error === 'string' ? error : String(error)
@@ -86,12 +132,52 @@ export const useAuthStore = create<AuthState>()(
             serverUrl: serverUrlToUse,
             deviceId: '',
           }
+
+          // ⚠️ 重要：注册成功后，像 switchAccount 一样加载所有业务数据
+          console.log('[authStore] 注册成功，开始加载业务数据')
+
+          // 1. 加载用户资料
+          const profileStore = useProfileStore.getState()
+          await profileStore.fetchProfile()
+          console.log('[authStore] 用户资料加载成功')
+
+          // 2. 加载工作空间（必须先加载，因为其他数据依赖它）
+          const workspaceStore = useWorkspaceStore.getState()
+          await workspaceStore.loadWorkspaces()
+          await workspaceStore.loadCurrentWorkspace()
+          console.log('[authStore] 工作空间加载成功，当前工作空间:', workspaceStore.currentWorkspace?.name)
+
+          // 🆕 迁移孤立数据到当前工作空间（未登录时创建的数据）
+          if (workspaceStore.currentWorkspace) {
+            try {
+              const migrateResult = await migrateOrphanDataToWorkspace(workspaceStore.currentWorkspace.id)
+              console.log('[authStore] 孤立数据迁移完成:', migrateResult)
+              if (migrateResult.notes > 0 || migrateResult.folders > 0 || migrateResult.tags > 0 || migrateResult.snapshots > 0) {
+                console.log(`[authStore] 迁移统计: ${migrateResult.notes} 条笔记, ${migrateResult.folders} 个文件夹, ${migrateResult.tags} 个标签, ${migrateResult.snapshots} 个快照`)
+              }
+            } catch (migrateError) {
+              console.warn('[authStore] 迁移孤立数据失败（非致命错误）:', migrateError)
+              // 迁移失败不影响注册流程，继续执行
+            }
+          }
+
+          // 3. 加载笔记和文件夹
+          const noteStore = useNoteStore.getState()
+          await noteStore.loadNotesFromStorage()
+          console.log('[authStore] 笔记和文件夹加载成功')
+
+          // 4. 加载标签
+          const tagStore = useTagStore.getState()
+          await tagStore.loadTags()
+          console.log('[authStore] 标签加载成功')
+
+          console.log('[authStore] 所有业务数据加载完成')
+
+          // 5. 刷新账号列表
+          await get().listAccounts()
+
           set({ user, isAuthenticated: true, isLoading: false })
-
           console.log('[authStore] 用户状态已更新')
-
-          // 注册成功后，刷新账号列表
-          get().listAccounts()
         } catch (error) {
           // Tauri 返回的错误是 string 类型
           const errorMsg = typeof error === 'string' ? error : String(error)
@@ -187,6 +273,29 @@ export const useAuthStore = create<AuthState>()(
           profileStore.clearProfile()
           await profileStore.fetchProfile()
           console.log('[authStore] 新用户资料获取成功:', profileStore.profile)
+
+          // ⚠️ 重要：清空并重新加载所有业务数据
+          console.log('[authStore] 开始重新加载业务数据')
+
+          // 1. 清空并重新加载工作空间（必须先加载，因为其他数据依赖它）
+          const workspaceStore = useWorkspaceStore.getState()
+          workspaceStore.clearWorkspaceState()  // 先清空状态，避免显示旧账号的工作空间
+          await workspaceStore.loadWorkspaces()
+          await workspaceStore.loadCurrentWorkspace()  // 加载新账号的当前工作空间
+          console.log('[authStore] 工作空间加载成功，当前工作空间:', workspaceStore.currentWorkspace?.name)
+
+          // 2. 重新加载笔记和文件夹
+          const noteStore = useNoteStore.getState()
+          noteStore.clearNotesState()  // 只清空前端状态，不删除数据库
+          await noteStore.loadNotesFromStorage()
+          console.log('[authStore] 笔记和文件夹加载成功')
+
+          // 3. 重新加载标签
+          const tagStore = useTagStore.getState()
+          await tagStore.loadTags()  // loadTags 会直接覆盖，无需先清空
+          console.log('[authStore] 标签加载成功')
+
+          console.log('[authStore] 所有业务数据加载完成')
 
           set({
             user,

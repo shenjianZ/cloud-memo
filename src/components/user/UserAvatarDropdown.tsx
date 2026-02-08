@@ -1,4 +1,4 @@
-import { LogOut, Settings, UserCircle, Users } from 'lucide-react'
+import { LogOut, Settings, UserCircle, Users, Briefcase } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { useProfileStore } from '@/store/profileStore'
 import { useNavigate } from 'react-router-dom'
@@ -13,12 +13,14 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { AccountManager } from './AccountManager'
+import { WorkspaceDrawer } from '@/components/workspace/WorkspaceDrawer'
 
 export function UserAvatarDropdown() {
   const { user, logout, allAccounts } = useAuthStore()
   const { profile } = useProfileStore()
   const navigate = useNavigate()
   const [accountManagerOpen, setAccountManagerOpen] = useState(false)
+  const [workspaceDrawerOpen, setWorkspaceDrawerOpen] = useState(false)
 
   const handleLogout = async () => {
     await logout()
@@ -103,6 +105,13 @@ export function UserAvatarDropdown() {
             </>
           )}
 
+          {/* 工作空间 - 点击打开抽屉 */}
+          <DropdownMenuItem onClick={() => setWorkspaceDrawerOpen(true)}>
+            <Briefcase className="mr-2 h-4 w-4" />
+            <span>工作空间</span>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+
           <DropdownMenuItem onClick={handleProfile}>
             <UserCircle className="mr-2 h-4 w-4" />
             <span>个人中心</span>
@@ -123,6 +132,12 @@ export function UserAvatarDropdown() {
       <AccountManager
         open={accountManagerOpen}
         onOpenChange={setAccountManagerOpen}
+      />
+
+      {/* 工作空间抽屉 */}
+      <WorkspaceDrawer
+        open={workspaceDrawerOpen}
+        onClose={() => setWorkspaceDrawerOpen(false)}
       />
     </>
   )

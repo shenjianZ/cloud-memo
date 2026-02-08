@@ -37,7 +37,16 @@ impl DeviceService {
     }
 
     /// 注册新设备或更新现有设备
-    /// 使用 device_id 确保每个设备都有唯一标识
+    ///
+    /// **多账号支持**：允许同一物理设备被多个账号使用
+    /// - 主键为 (user_id, device_id) 复合主键
+    /// - 每个用户-设备组合都是独立的记录
+    /// - 同一个 device_id 可以关联不同的 user_id
+    ///
+    /// 示例：
+    /// - 用户 A 使用设备 desktop-windows-xxx → 创建记录 (user_a, desktop-windows-xxx)
+    /// - 用户 B 使用设备 desktop-windows-xxx → 创建记录 (user_b, desktop-windows-xxx)
+    /// - 用户 A 再次登录 → 更新记录 (user_a, desktop-windows-xxx) 的 last_seen_at
     pub async fn register_or_update(
         &self,
         user_id: &str,
@@ -47,7 +56,7 @@ impl DeviceService {
     ) -> Result<Device> {
         let now = Utc::now().timestamp();
 
-        // 首先尝试查找现有设备（通过 user_id 和 device_id）
+        // 查找当前用户的该设备记录（使用复合主键：user_id + device_id）
         let existing_device = sqlx::query_as::<_, Device>(
             "SELECT * FROM devices
              WHERE user_id = ? AND id = ?
@@ -60,15 +69,21 @@ impl DeviceService {
         .await?;
 
         if let Some(mut device) = existing_device {
-            // 设备已存在，更新 last_seen_at 和设备信息
+            // 设备已存在（当前用户之前注册过此设备），更新 last_seen_at 和设备信息
+            tracing::info!(
+                "更新现有设备记录: user_id={}, device_id={}, device_name={}",
+                user_id, device_id, device_name
+            );
+
             sqlx::query(
                 "UPDATE devices SET last_seen_at = ?, device_name = ?, device_type = ?
-                 WHERE id = ?"
+                 WHERE user_id = ? AND id = ?"
             )
             .bind(now)
             .bind(device_name)
             .bind(device_type)
-            .bind(&device.id)
+            .bind(user_id)
+            .bind(device_id)
             .execute(&self.pool)
             .await?;
 
@@ -77,7 +92,12 @@ impl DeviceService {
             device.device_type = device_type.to_string();
             Ok(device)
         } else {
-            // 创建新设备
+            // 创建新设备记录（该用户首次使用此设备）
+            tracing::info!(
+                "创建新设备记录: user_id={}, device_id={}, device_name={}",
+                user_id, device_id, device_name
+            );
+
             sqlx::query(
                 "INSERT INTO devices (id, user_id, device_name, device_type, revoked, last_seen_at, created_at)
                  VALUES (?, ?, ?, ?, false, ?, ?)"

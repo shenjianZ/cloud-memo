@@ -18,6 +18,8 @@ pub struct Note {
 
     // ===== 分类与标记 =====
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,  // 所属工作空间 ID
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub folder_id: Option<String>,  // 所属文件夹 ID
     #[serde(default)]
     pub is_favorite: bool,  // 是否收藏
@@ -68,6 +70,7 @@ impl Note {
             excerpt: Self::generate_excerpt(&content),
             markdown_cache: None,
             content,
+            workspace_id: None,  // 将由 Service 层设置
             folder_id,
             is_favorite: false,
             is_deleted: false,
@@ -104,6 +107,7 @@ impl Note {
             excerpt: self.excerpt.clone(),
             markdown_cache: self.markdown_cache.clone(),
             content: self.content.clone(),
+            workspace_id: self.workspace_id.clone(),
             folder_id: self.folder_id.clone(),
             is_favorite: self.is_favorite,
             is_deleted: false,

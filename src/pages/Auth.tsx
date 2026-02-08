@@ -6,7 +6,7 @@ import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
+import { AuthCheckbox } from "@/components/ui/auth-checkbox";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -29,6 +29,14 @@ export default function Auth() {
                 const unlisten = await authWindow.onCloseRequested(
                     async (event) => {
                         event.preventDefault(); // 阻止默认的关闭行为
+
+                        // 清空所有表单状态
+                        setEmail("");
+                        setPassword("");
+                        setServerUrl("");
+                        setUseCustomServer(false);
+                        setIsLoading(false);
+
                         await authWindow.hide(); // 改为隐藏窗口
                     },
                 );
@@ -48,6 +56,14 @@ export default function Auth() {
 
     const handleClose = async () => {
         const authWindow = getCurrentWindow();
+
+        // 清空所有表单状态
+        setEmail("");
+        setPassword("");
+        setServerUrl("");
+        setUseCustomServer(false);
+        setIsLoading(false);
+
         await authWindow.hide(); // 使用 hide 而不是 close
     };
 
@@ -160,11 +176,11 @@ export default function Auth() {
 
                         <div className="space-y-2">
                             <div className="flex items-center space-x-2">
-                                <Checkbox
+                                <AuthCheckbox
                                     id="login-custom-server"
                                     checked={useCustomServer}
                                     onCheckedChange={(checked) =>
-                                        setUseCustomServer(checked === true)
+                                        setUseCustomServer(checked)
                                     }
                                     disabled={isLoading}
                                 />
@@ -230,11 +246,11 @@ export default function Auth() {
 
                         <div className="space-y-2">
                             <div className="flex items-center space-x-2">
-                                <Checkbox
+                                <AuthCheckbox
                                     id="register-custom-server"
                                     checked={useCustomServer}
                                     onCheckedChange={(checked) =>
-                                        setUseCustomServer(checked === true)
+                                        setUseCustomServer(checked)
                                     }
                                     disabled={isLoading}
                                 />

@@ -55,6 +55,7 @@ impl SingleSyncService {
         // 5. 构建同步请求
         // 如果笔记存在且是脏数据，就推送；否则只拉取服务器更新
         let request = SyncRequest {
+            workspaces: None, // 不同步工作空间
             notes: note_opt.map(|n| vec![n.into()]),
             folders: None, // 不同步文件夹
             tags: Some(tags.into_iter().map(|t| t.into()).collect()),
@@ -82,18 +83,21 @@ impl SingleSyncService {
         let report = SyncReport {
             success: response.status != "error",
             // ✅ 使用服务器确认的推送统计
+            pushed_workspaces: response.pushed_workspaces,
             pushed_notes: response.pushed_notes,
             pushed_folders: response.pushed_folders,
             pushed_tags: response.pushed_tags,
             pushed_snapshots: response.pushed_snapshots,
             pushed_note_tags: response.pushed_note_tags,
             // ✅ 使用服务器计算的拉取统计
+            pulled_workspaces: response.pulled_workspaces,
             pulled_notes: response.pulled_notes,
             pulled_folders: response.pulled_folders,
             pulled_tags: response.pulled_tags,
             pulled_snapshots: response.pulled_snapshots,
             pulled_note_tags: response.pulled_note_tags,
             // 删除的数据统计
+            deleted_workspaces: response.deleted_workspace_ids.len(),
             deleted_notes: response.deleted_note_ids.len(),
             deleted_folders: response.deleted_folder_ids.len(),
             deleted_tags: response.deleted_tag_ids.len(),
@@ -128,6 +132,7 @@ impl SingleSyncService {
 
         // 2. 构建同步请求
         let request = SyncRequest {
+            workspaces: None,
             notes: None,
             folders: None,
             tags: Some(vec![tag.into()]),
@@ -152,16 +157,19 @@ impl SingleSyncService {
 
         Ok(SyncReport {
             success: response.status != "error",
+            pushed_workspaces: response.pushed_workspaces,
             pushed_notes: response.pushed_notes,
             pushed_folders: response.pushed_folders,
             pushed_tags: response.pushed_tags,
             pushed_snapshots: response.pushed_snapshots,
             pushed_note_tags: response.pushed_note_tags,
+            pulled_workspaces: response.pulled_workspaces,
             pulled_notes: response.pulled_notes,
             pulled_folders: response.pulled_folders,
             pulled_tags: response.pulled_tags,
             pulled_snapshots: response.pulled_snapshots,
             pulled_note_tags: response.pulled_note_tags,
+            deleted_workspaces: response.deleted_workspace_ids.len(),
             deleted_notes: response.deleted_note_ids.len(),
             deleted_folders: response.deleted_folder_ids.len(),
             deleted_tags: response.deleted_tag_ids.len(),
@@ -182,6 +190,7 @@ impl SingleSyncService {
 
         // 2. 构建同步请求
         let request = SyncRequest {
+            workspaces: None,
             notes: None,
             folders: None,
             tags: None,
@@ -206,16 +215,19 @@ impl SingleSyncService {
 
         Ok(SyncReport {
             success: response.status != "error",
+            pushed_workspaces: response.pushed_workspaces,
             pushed_notes: response.pushed_notes,
             pushed_folders: response.pushed_folders,
             pushed_tags: response.pushed_tags,
             pushed_snapshots: response.pushed_snapshots,
             pushed_note_tags: response.pushed_note_tags,
+            pulled_workspaces: response.pulled_workspaces,
             pulled_notes: response.pulled_notes,
             pulled_folders: response.pulled_folders,
             pulled_tags: response.pulled_tags,
             pulled_snapshots: response.pulled_snapshots,
             pulled_note_tags: response.pulled_note_tags,
+            deleted_workspaces: response.deleted_workspace_ids.len(),
             deleted_notes: response.deleted_note_ids.len(),
             deleted_folders: response.deleted_folder_ids.len(),
             deleted_tags: response.deleted_tag_ids.len(),
@@ -277,6 +289,7 @@ impl SingleSyncService {
         let snapshots_count = all_snapshots.len();
 
         let request = SyncRequest {
+            workspaces: None,
             conflict_resolution: ConflictStrategy::default(),
             device_id: None,
             notes: if all_notes.is_empty() { None } else { Some(all_notes.into_iter().map(|n| n.into()).collect()) },
@@ -302,18 +315,21 @@ impl SingleSyncService {
         let report = SyncReport {
             success: response.status != "error",
             // ✅ 使用服务器确认的推送统计
+            pushed_workspaces: response.pushed_workspaces,
             pushed_notes: response.pushed_notes,
             pushed_folders: response.pushed_folders,
             pushed_tags: response.pushed_tags,
             pushed_snapshots: response.pushed_snapshots,
             pushed_note_tags: response.pushed_note_tags,
             // ✅ 使用服务器计算的拉取统计
+            pulled_workspaces: response.pulled_workspaces,
             pulled_notes: response.pulled_notes,
             pulled_folders: response.pulled_folders,
             pulled_tags: response.pulled_tags,
             pulled_snapshots: response.pulled_snapshots,
             pulled_note_tags: response.pulled_note_tags,
             // 删除的数据统计
+            deleted_workspaces: response.deleted_workspace_ids.len(),
             deleted_notes: response.deleted_note_ids.len(),
             deleted_folders: response.deleted_folder_ids.len(),
             deleted_tags: response.deleted_tag_ids.len(),
@@ -414,11 +430,12 @@ impl SingleSyncService {
                 icon: row.get(3)?,
                 color: row.get(4)?,
                 sort_order: row.get(5)?,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
-                server_ver: row.get(8)?,
-                is_dirty: row.get(9)?,
-                last_synced_at: row.get(10)?,
+                workspace_id: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+                server_ver: row.get(9)?,
+                is_dirty: row.get(10)?,
+                last_synced_at: row.get(11)?,
                 deleted_at: None,
                 is_deleted: false,
             })
@@ -469,11 +486,12 @@ impl SingleSyncService {
                 icon: row.get(3)?,
                 color: row.get(4)?,
                 sort_order: row.get(5)?,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
-                server_ver: row.get(8)?,
-                is_dirty: row.get(9)?,
-                last_synced_at: row.get(10)?,
+                workspace_id: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+                server_ver: row.get(9)?,
+                is_dirty: row.get(10)?,
+                last_synced_at: row.get(11)?,
                 deleted_at: None,
                 is_deleted: false,
             })
@@ -493,7 +511,7 @@ impl SingleSyncService {
             .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, excerpt, markdown_cache, folder_id,
+            "SELECT id, title, content, excerpt, markdown_cache, workspace_id, folder_id,
                     is_favorite, is_deleted, is_pinned, author,
                     created_at, updated_at, deleted_at, word_count, read_time_minutes,
                     server_ver, is_dirty, last_synced_at
@@ -508,19 +526,20 @@ impl SingleSyncService {
                 content: row.get(2)?,
                 excerpt: row.get(3)?,
                 markdown_cache: row.get(4)?,
-                folder_id: row.get(5)?,
-                is_favorite: row.get(6)?,
-                is_deleted: row.get(7)?,
-                is_pinned: row.get(8)?,
-                author: row.get(9)?,
-                created_at: row.get(10)?,
-                updated_at: row.get(11)?,
-                deleted_at: row.get(12)?,
-                word_count: row.get(13)?,
-                read_time_minutes: row.get(14)?,
-                server_ver: row.get(15)?,
-                is_dirty: row.get(16)?,
-                last_synced_at: row.get(17)?,
+                workspace_id: row.get(5)?,
+                folder_id: row.get(6)?,
+                is_favorite: row.get(7)?,
+                is_deleted: row.get(8)?,
+                is_pinned: row.get(9)?,
+                author: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+                deleted_at: row.get(13)?,
+                word_count: row.get(14)?,
+                read_time_minutes: row.get(15)?,
+                server_ver: row.get(16)?,
+                is_dirty: row.get(17)?,
+                last_synced_at: row.get(18)?,
             })
         }).map_err(|e| AppError::DatabaseError(format!("解析笔记失败: {}", e)))?
         .collect::<std::result::Result<Vec<_>, _>>()
@@ -541,7 +560,7 @@ impl SingleSyncService {
             .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, excerpt, markdown_cache, folder_id,
+            "SELECT id, title, content, excerpt, markdown_cache, workspace_id, folder_id,
                     is_favorite, is_deleted, is_pinned, author,
                     created_at, updated_at, deleted_at, word_count, read_time_minutes,
                     server_ver, is_dirty, last_synced_at
@@ -556,19 +575,20 @@ impl SingleSyncService {
                 content: row.get(2)?,
                 excerpt: row.get(3)?,
                 markdown_cache: row.get(4)?,
-                folder_id: row.get(5)?,
-                is_favorite: row.get(6)?,
-                is_deleted: row.get(7)?,
-                is_pinned: row.get(8)?,
-                author: row.get(9)?,
-                created_at: row.get(10)?,
-                updated_at: row.get(11)?,
-                deleted_at: row.get(12)?,
-                word_count: row.get(13)?,
-                read_time_minutes: row.get(14)?,
-                server_ver: row.get(15)?,
-                is_dirty: row.get(16)?,
-                last_synced_at: row.get(17)?,
+                workspace_id: row.get(5)?,
+                folder_id: row.get(6)?,
+                is_favorite: row.get(7)?,
+                is_deleted: row.get(8)?,
+                is_pinned: row.get(9)?,
+                author: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+                deleted_at: row.get(13)?,
+                word_count: row.get(14)?,
+                read_time_minutes: row.get(15)?,
+                server_ver: row.get(16)?,
+                is_dirty: row.get(17)?,
+                last_synced_at: row.get(18)?,
             })
         }) {
             Ok(note) => {
@@ -594,7 +614,7 @@ impl SingleSyncService {
             .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, excerpt, markdown_cache, folder_id,
+            "SELECT id, title, content, excerpt, markdown_cache, workspace_id, folder_id,
                     is_favorite, is_deleted, is_pinned, author,
                     created_at, updated_at, deleted_at, word_count, read_time_minutes,
                     server_ver, is_dirty, last_synced_at
@@ -609,19 +629,20 @@ impl SingleSyncService {
                 content: row.get(2)?,
                 excerpt: row.get(3)?,
                 markdown_cache: row.get(4)?,
-                folder_id: row.get(5)?,
-                is_favorite: row.get(6)?,
-                is_deleted: row.get(7)?,
-                is_pinned: row.get(8)?,
-                author: row.get(9)?,
-                created_at: row.get(10)?,
-                updated_at: row.get(11)?,
-                deleted_at: row.get(12)?,
-                word_count: row.get(13)?,
-                read_time_minutes: row.get(14)?,
-                server_ver: row.get(15)?,
-                is_dirty: row.get(16)?,
-                last_synced_at: row.get(17)?,
+                workspace_id: row.get(5)?,
+                folder_id: row.get(6)?,
+                is_favorite: row.get(7)?,
+                is_deleted: row.get(8)?,
+                is_pinned: row.get(9)?,
+                author: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+                deleted_at: row.get(13)?,
+                word_count: row.get(14)?,
+                read_time_minutes: row.get(15)?,
+                server_ver: row.get(16)?,
+                is_dirty: row.get(17)?,
+                last_synced_at: row.get(18)?,
             })
         }).map_err(|e| AppError::DatabaseError(format!("笔记 {} 未找到或不是脏数据: {}", note_id, e)))?;
 
@@ -652,13 +673,14 @@ impl SingleSyncService {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 color: row.get(2)?,
-                created_at: row.get(3)?,
-                updated_at: row.get(4)?,
-                deleted_at: row.get(5)?,
-                is_deleted: row.get(6)?,  // ✅ 添加 is_deleted 字段
-                server_ver: row.get(7)?,
-                is_dirty: row.get(8)?,
-                last_synced_at: row.get(9)?,
+                workspace_id: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+                deleted_at: row.get(6)?,
+                is_deleted: row.get(7)?,  // ✅ 添加 is_deleted 字段
+                server_ver: row.get(8)?,
+                is_dirty: row.get(9)?,
+                last_synced_at: row.get(10)?,
             })
         }).map_err(|e| AppError::DatabaseError(format!("查询标签失败: {}", e)))?
         .collect::<std::result::Result<Vec<_>, _>>()
@@ -679,7 +701,7 @@ impl SingleSyncService {
 
         let mut stmt = conn.prepare(
             "SELECT id, note_id, title, content, snapshot_name,
-                    created_at, server_ver, is_dirty, last_synced_at
+                    created_at, workspace_id, server_ver, is_dirty, last_synced_at
              FROM note_snapshots
              WHERE note_id = ?1 AND is_dirty = 1"  // ✅ 只返回脏快照
         ).map_err(|e| AppError::DatabaseError(format!("准备查询失败: {}", e)))?;
@@ -692,9 +714,10 @@ impl SingleSyncService {
                 content: row.get(3)?,
                 snapshot_name: row.get(4)?,
                 created_at: row.get(5)?,
-                server_ver: row.get(6)?,
-                is_dirty: row.get(7)?,
-                last_synced_at: row.get(8)?,
+                workspace_id: row.get(6)?,
+                server_ver: row.get(7)?,
+                is_dirty: row.get(8)?,
+                last_synced_at: row.get(9)?,
             })
         }).map_err(|e| AppError::DatabaseError(format!("查询快照失败: {}", e)))?
         .collect::<std::result::Result<Vec<_>, _>>()

@@ -753,3 +753,61 @@ body {
   }
 }
 
+/* ==================== 抽屉动画 ==================== */
+
+@keyframes slideInFromRight {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-in-from-right {
+  animation: slideInFromRight 0.3s ease-out;
+}
+
+/* ==================== Auth 页面 Checkbox 样式调整 ==================== */
+
+/* 缩小 Checkbox 的尺寸 */
+.auth-checkbox {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+/* 调整 Checkbox 内部勾选框的样式 */
+.auth-checkbox[data-state="checked"] {
+  background-color: hsl(var(--primary)) !important;
+}
+
+/* 调整 Checkbox Indicator 的容器 */
+.auth-checkbox [data-radix-checkbox-indicator] {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* 调整 Checkbox 的勾选标记大小和颜色 - 确保对钩可见 */
+.auth-checkbox svg {
+  width: 10px !important;
+  height: 10px !important;
+  color: white !important;
+  stroke: white !important;
+  stroke-width: 2.5 !important;
+  display: block !important;
+}
+
+/* 针对未选中状态的 Indicator */
+.auth-checkbox[data-state="unchecked"] [data-radix-checkbox-indicator] {
+  display: none !important;
+}
+
+/* 针对选中状态的 Indicator */
+.auth-checkbox[data-state="checked"] [data-radix-checkbox-indicator] {
+  display: flex !important;
+}
+

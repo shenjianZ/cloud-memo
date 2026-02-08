@@ -1,13 +1,24 @@
-use crate::models::{Note, Folder, Tag, NoteSnapshot, NoteTagRelation, SyncRequest, SyncResponse, SyncReport, ConflictInfo, SyncStatus, ConflictStrategy};
+use crate::models::{Note, Folder, Tag, NoteSnapshot, NoteTagRelation, SyncRequest, SyncResponse, SyncReport, ConflictInfo, SyncStatus, ConflictStrategy, Workspace};
 use crate::models::error::{Result, AppError};
 use crate::services::auth_service::AuthService;
 use crate::services::crypto::CryptoService;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use r2d2_sqlite::rusqlite;
+use r2d2_sqlite::rusqlite::{self, params};
 use chrono::Utc;
 use reqwest::Client;
 use std::time::Duration;
+
+/// 同步会话状态
+///
+/// 记录同步开始时的用户和工作空间状态，用于防止同步过程中的状态变化
+#[derive(Clone, Debug)]
+pub struct SyncSession {
+    pub session_id: String,           // 唯一会话 ID
+    pub user_id: String,              // 同步开始时的用户 ID
+    pub workspace_id: Option<String>, // 同步开始时的工作空间 ID
+    pub started_at: i64,              // 开始时间戳
+}
 
 /// 同步服务
 ///
@@ -32,6 +43,78 @@ impl SyncService {
     /// 获取数据库连接池（供其他服务使用）
     pub fn get_pool(&self) -> &Pool<SqliteConnectionManager> {
         &self.pool
+    }
+
+    /// 开始同步会话（记录当前状态）
+    ///
+    /// 在同步开始时调用，记录当前用户和工作空间的状态。
+    /// 同步过程中可以通过 verify_sync_session 检查状态是否改变。
+    fn begin_sync_session(&self) -> Result<SyncSession> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
+
+        // 获取当前用户 ID
+        let user_id: String = conn.query_row(
+            "SELECT user_id FROM user_auth WHERE is_current = 1 LIMIT 1",
+            [],
+            |row| row.get(0),
+        ).map_err(|_| AppError::NotAuthenticated("User not logged in".to_string()))?;
+
+        // 获取当前工作空间 ID
+        let workspace_id: Option<String> = conn.query_row(
+            "SELECT id FROM workspaces WHERE user_id = ? AND is_current = 1 AND is_deleted = 0 LIMIT 1",
+            params![&user_id],
+            |row| row.get(0),
+        ).ok();
+
+        let session = SyncSession {
+            session_id: uuid::Uuid::new_v4().to_string(),
+            user_id,
+            workspace_id,
+            started_at: chrono::Utc::now().timestamp(),
+        };
+
+        log::info!("[SyncService] 开始同步会话: session_id={}, user_id={}, workspace_id={:?}",
+            session.session_id, session.user_id, session.workspace_id);
+
+        Ok(session)
+    }
+
+    /// 验证同步会话（检查状态是否改变）
+    ///
+    /// 在同步过程中的关键步骤调用此方法，检查用户或工作空间是否发生变化。
+    /// 如果状态改变，应立即取消同步。
+    fn verify_sync_session(&self, session: &SyncSession) -> Result<bool> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
+
+        // 获取当前用户 ID
+        let current_user_id: Option<String> = conn.query_row(
+            "SELECT user_id FROM user_auth WHERE is_current = 1 LIMIT 1",
+            [],
+            |row| row.get(0),
+        ).ok();
+
+        // 获取当前工作空间 ID
+        let current_workspace_id: Option<String> = if let Some(ref uid) = current_user_id {
+            conn.query_row(
+                "SELECT id FROM workspaces WHERE user_id = ? AND is_current = 1 AND is_deleted = 0 LIMIT 1",
+                params![uid],
+                |row| row.get(0),
+            ).ok()
+        } else {
+            None
+        };
+
+        let is_valid = current_user_id.as_ref() == Some(&session.user_id)
+            && current_workspace_id == session.workspace_id;
+
+        if !is_valid {
+            log::warn!("[SyncService] 同步会话失效: session_id={}, expected user={}, workspace={:?}, current user={:?}, current workspace={:?}",
+                session.session_id, session.user_id, session.workspace_id, current_user_id, current_workspace_id);
+        }
+
+        Ok(is_valid)
     }
 
     /// 获取服务器 URL、解密后的 token 和 device_id
@@ -64,36 +147,59 @@ impl SyncService {
     pub async fn full_sync(&self) -> Result<SyncReport> {
         log::info!("Starting full sync");
 
-        // 1. 构建同步请求（包含所有数据）
+        // 1. 开始同步会话（记录当前用户和工作空间状态）
+        let session = self.begin_sync_session()?;
+
+        // 2. 构建同步请求（包含所有数据）
+        if !self.verify_sync_session(&session)? {
+            return Err(AppError::SyncCancelled("用户或工作空间已切换".to_string()));
+        }
         let request = self.build_sync_request()?;
 
-        // 2. 发送同步请求（统一的 /sync 端点）
+        // 3. 发送同步请求（统一的 /sync 端点）
+        if !self.verify_sync_session(&session)? {
+            return Err(AppError::SyncCancelled("用户或工作空间已切换".to_string()));
+        }
         let response = self.send_sync_request(&request).await?;
 
-        // 3. 应用服务器响应，并获取修正后的统计（基于实际应用的数量）
+        // 4. 应用服务器响应，并获取修正后的统计（基于实际应用的数量）
+        if !self.verify_sync_session(&session)? {
+            return Err(AppError::SyncCancelled("用户或工作空间已切换，已取消同步".to_string()));
+        }
         let corrected_response = self.apply_sync_response(&response)?;
 
-        // 4. 清理脏标记
-        self.clear_dirty_markers(&request, response.last_sync_at)?;
+        // 5. 清理脏标记
+        if !self.verify_sync_session(&session)? {
+            log::warn!("[SyncService] 应用完成但验证失败，跳过清理脏标记");
+        } else {
+            self.clear_dirty_markers(&request, response.last_sync_at)?;
+        }
 
-        // 5. 更新同步状态
-        self.update_sync_state(response.last_sync_at, response.conflicts.len() as i32)?;
+        // 6. 更新同步状态
+        if !self.verify_sync_session(&session)? {
+            log::warn!("[SyncService] 验证失败，跳过更新同步状态");
+        } else {
+            self.update_sync_state(response.last_sync_at, response.conflicts.len() as i32)?;
+        }
 
         let report = SyncReport {
             success: response.status != "error",
             // ✅ 使用服务器确认的推送统计
+            pushed_workspaces: response.pushed_workspaces,
             pushed_notes: response.pushed_notes,
             pushed_folders: response.pushed_folders,
             pushed_tags: response.pushed_tags,
             pushed_snapshots: response.pushed_snapshots,
             pushed_note_tags: response.pushed_note_tags,
             // ✅ 使用修正后的拉取统计（基于实际应用的数据数量）
+            pulled_workspaces: corrected_response.pulled_workspaces,
             pulled_notes: corrected_response.pulled_notes,
             pulled_folders: corrected_response.pulled_folders,
             pulled_tags: corrected_response.pulled_tags,
             pulled_snapshots: corrected_response.pulled_snapshots,
             pulled_note_tags: corrected_response.pulled_note_tags,
             // 删除的数据统计
+            deleted_workspaces: response.deleted_workspace_ids.len(),
             deleted_notes: response.deleted_note_ids.len(),
             deleted_folders: response.deleted_folder_ids.len(),
             deleted_tags: response.deleted_tag_ids.len(),
@@ -109,11 +215,11 @@ impl SyncService {
             pulled_count: None,
         };
 
-        log::info!("Full sync completed: pushed_total={}, pulled_total={}, pushed_notes={}, pushed_folders={}, pushed_tags={}, pushed_snapshots={}, pushed_note_tags={}, pulled_notes={}, pulled_folders={}, pulled_tags={}, pulled_snapshots={}, pulled_note_tags={}, deleted_notes={}, deleted_folders={}, deleted_tags={}, conflicts={}",
+        log::info!("Full sync completed: pushed_total={}, pulled_total={}, pushed_workspaces={}, pushed_notes={}, pushed_folders={}, pushed_tags={}, pushed_snapshots={}, pushed_note_tags={}, pulled_workspaces={}, pulled_notes={}, pulled_folders={}, pulled_tags={}, pulled_snapshots={}, pulled_note_tags={}, deleted_workspaces={}, deleted_notes={}, deleted_folders={}, deleted_tags={}, conflicts={}",
             response.pushed_total, corrected_response.pulled_total,
-            report.pushed_notes, report.pushed_folders, report.pushed_tags, report.pushed_snapshots, report.pushed_note_tags,
-            report.pulled_notes, report.pulled_folders, report.pulled_tags, report.pulled_snapshots, report.pulled_note_tags,
-            report.deleted_notes, report.deleted_folders, report.deleted_tags, report.conflict_count);
+            report.pushed_workspaces, report.pushed_notes, report.pushed_folders, report.pushed_tags, report.pushed_snapshots, report.pushed_note_tags,
+            report.pulled_workspaces, report.pulled_notes, report.pulled_folders, report.pulled_tags, report.pulled_snapshots, report.pulled_note_tags,
+            report.deleted_workspaces, report.deleted_notes, report.deleted_folders, report.deleted_tags, report.conflict_count);
 
         Ok(report)
     }
@@ -139,6 +245,7 @@ impl SyncService {
     pub async fn pull_from_server(&self) -> Result<SyncResponse> {
         // 使用新的统一同步方法
         let request = SyncRequest {
+            workspaces: None,
             notes: None,
             folders: None,
             tags: None,
@@ -194,7 +301,7 @@ impl SyncService {
             .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, excerpt, markdown_cache, folder_id,
+            "SELECT id, title, content, excerpt, markdown_cache, workspace_id, folder_id,
                     is_favorite, is_deleted, is_pinned, author,
                     created_at, updated_at, deleted_at, word_count, read_time_minutes,
                     server_ver, is_dirty, last_synced_at
@@ -209,19 +316,20 @@ impl SyncService {
                 content: row.get(2)?,
                 excerpt: row.get(3)?,
                 markdown_cache: row.get(4)?,
-                folder_id: row.get(5)?,
-                is_favorite: row.get(6)?,
-                is_deleted: row.get(7)?,
-                is_pinned: row.get(8)?,
-                author: row.get(9)?,
-                created_at: row.get(10)?,
-                updated_at: row.get(11)?,
-                deleted_at: row.get(12)?,
-                word_count: row.get(13)?,
-                read_time_minutes: row.get(14)?,
-                server_ver: row.get(15)?,
-                is_dirty: row.get(16)?,
-                last_synced_at: row.get(17)?,
+                workspace_id: row.get(5)?,
+                folder_id: row.get(6)?,
+                is_favorite: row.get(7)?,
+                is_deleted: row.get(8)?,
+                is_pinned: row.get(9)?,
+                author: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+                deleted_at: row.get(13)?,
+                word_count: row.get(14)?,
+                read_time_minutes: row.get(15)?,
+                server_ver: row.get(16)?,
+                is_dirty: row.get(17)?,
+                last_synced_at: row.get(18)?,
             })
         })
         .map_err(|e| AppError::DatabaseError(format!("Failed to parse notes: {}", e)))?
@@ -254,6 +362,45 @@ impl SyncService {
         Ok(notes)
     }
 
+    /// 获取所有脏工作空间
+    fn get_dirty_workspaces(&self) -> Result<Vec<Workspace>> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT id, user_id, name, description, icon, color, is_default, is_current, sort_order,
+                    created_at, updated_at, is_deleted, deleted_at, server_ver, is_dirty, last_synced_at
+             FROM workspaces
+             WHERE is_dirty = 1 AND is_deleted = 0"
+        ).map_err(|e| AppError::DatabaseError(format!("Failed to get dirty workspaces: {}", e)))?;
+
+        let workspaces = stmt.query_map([], |row| {
+            Ok(Workspace {
+                id: row.get(0)?,
+                user_id: row.get(1)?,
+                name: row.get(2)?,
+                description: row.get(3)?,
+                icon: row.get(4)?,
+                color: row.get(5)?,
+                is_default: row.get(6)?,
+                is_current: row.get(7)?,
+                sort_order: row.get(8)?,
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
+                is_deleted: row.get(11)?,
+                deleted_at: row.get(12)?,
+                server_ver: row.get(13)?,
+                is_dirty: row.get(14)?,
+                last_synced_at: row.get(15)?,
+            })
+        })
+        .map_err(|e| AppError::DatabaseError(format!("Failed to parse workspaces: {}", e)))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| AppError::DatabaseError(format!("Failed to collect workspaces: {}", e)))?;
+
+        Ok(workspaces)
+    }
+
     /// 获取所有脏文件夹
     fn get_dirty_folders(&self) -> Result<Vec<Folder>> {
         let conn = self.pool.get()
@@ -275,13 +422,14 @@ impl SyncService {
                 icon: row.get(3)?,
                 color: row.get(4)?,
                 sort_order: row.get(5)?,
-                is_deleted: row.get(6)?,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
-                deleted_at: row.get(9)?,
-                server_ver: row.get(10)?,
-                is_dirty: row.get(11)?,
-                last_synced_at: row.get(12)?,
+                workspace_id: row.get(6)?,
+                is_deleted: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+                deleted_at: row.get(10)?,
+                server_ver: row.get(11)?,
+                is_dirty: row.get(12)?,
+                last_synced_at: row.get(13)?,
             })
         })
         .map_err(|e| AppError::DatabaseError(format!("Failed to parse folders: {}", e)))?
@@ -355,6 +503,90 @@ impl SyncService {
         Ok(())
     }
 
+    /// 应用服务器工作空间（v2，检查版本）
+    fn apply_server_workspace_v2(&self, server_workspace: &crate::models::sync::ServerWorkspace, sync_time: i64) -> Result<bool> {
+        let workspace: Workspace = server_workspace.clone().into();
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
+
+        // 检查本地工作空间的 server_ver
+        let local_server_ver: Option<i32> = conn.query_row(
+            "SELECT server_ver FROM workspaces WHERE id = ?",
+            [&workspace.id],
+            |row| row.get(0),
+        ).ok();
+
+        match local_server_ver {
+            Some(local_ver) if local_ver >= server_workspace.server_ver => {
+                log::info!("[SyncService] ⏭️ 跳过服务器工作空间（本地版本更新或相同）: id={}, local_ver={}, server_ver={}",
+                    workspace.id, local_ver, server_workspace.server_ver);
+                return Ok(false);
+            },
+            _ => {
+                log::info!("[SyncService] ✅ 应用服务器工作空间: id={}, name={}, local_ver={:?}, server_ver={}",
+                    workspace.id, workspace.name, local_server_ver, server_workspace.server_ver);
+            }
+        }
+
+        // ⚠️ 注意：不更新 is_current 字段（保留本地设置）
+        conn.execute(
+            "INSERT INTO workspaces
+             (id, user_id, name, description, icon, color, is_default, is_current, sort_order,
+              is_deleted, created_at, updated_at, deleted_at, server_ver, is_dirty, last_synced_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, 0, ?15)
+             ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                description = excluded.description,
+                icon = COALESCE(excluded.icon, workspaces.icon),
+                color = COALESCE(excluded.color, workspaces.color),
+                is_default = excluded.is_default,
+                -- is_current 不更新，保留本地设置
+                sort_order = excluded.sort_order,
+                is_deleted = excluded.is_deleted,
+                updated_at = excluded.updated_at,
+                deleted_at = excluded.deleted_at,
+                server_ver = excluded.server_ver,
+                is_dirty = 0,
+                last_synced_at = excluded.last_synced_at",
+            (
+                &workspace.id, &workspace.user_id, &workspace.name, &workspace.description,
+                &workspace.icon, &workspace.color, workspace.is_default, &workspace.is_current,
+                workspace.sort_order, workspace.is_deleted, workspace.created_at, workspace.updated_at,
+                workspace.deleted_at, server_workspace.server_ver, sync_time,
+            ),
+        ).map_err(|e| AppError::DatabaseError(format!("应用服务器工作空间失败: {}", e)))?;
+
+        Ok(true)
+    }
+
+    /// 标记工作空间为已删除
+    fn mark_workspace_deleted(&self, workspace_id: &str) -> Result<()> {
+        let conn = self.pool.get()
+            .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
+
+        let now = Utc::now().timestamp();
+
+        // 软删除工作空间（但保护默认工作空间）
+        let is_default: bool = conn.query_row(
+            "SELECT is_default FROM workspaces WHERE id = ?",
+            [workspace_id],
+            |row| row.get(0),
+        ).unwrap_or(false);
+
+        if is_default {
+            log::warn!("拒绝删除默认工作空间: {}", workspace_id);
+            return Ok(());  // 静默跳过
+        }
+
+        conn.execute(
+            "UPDATE workspaces SET is_deleted = 1, deleted_at = ?, is_dirty = 0 WHERE id = ?",
+            (now, workspace_id),
+        ).map_err(|e| AppError::DatabaseError(format!("标记工作空间已删除失败: {}", e)))?;
+
+        log::debug!("Workspace marked as deleted: {}", workspace_id);
+        Ok(())
+    }
+
     /// 解决冲突（保留服务器版本，创建本地副本）
     fn resolve_conflict(&self, conflict: &ConflictInfo) -> Result<()> {
         if conflict.entity_type == "note" {
@@ -404,7 +636,7 @@ impl SyncService {
             .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, excerpt, markdown_cache, folder_id,
+            "SELECT id, title, content, excerpt, markdown_cache, workspace_id, folder_id,
                     is_favorite, is_deleted, is_pinned, author,
                     created_at, updated_at, deleted_at, word_count, read_time_minutes,
                     server_ver, is_dirty, last_synced_at
@@ -419,19 +651,20 @@ impl SyncService {
                 content: row.get(2)?,
                 excerpt: row.get(3)?,
                 markdown_cache: row.get(4)?,
-                folder_id: row.get(5)?,
-                is_favorite: row.get(6)?,
-                is_deleted: row.get(7)?,
-                is_pinned: row.get(8)?,
-                author: row.get(9)?,
-                created_at: row.get(10)?,
-                updated_at: row.get(11)?,
-                deleted_at: row.get(12)?,
-                word_count: row.get(13)?,
-                read_time_minutes: row.get(14)?,
-                server_ver: row.get(15)?,
-                is_dirty: row.get(16)?,
-                last_synced_at: row.get(17)?,
+                workspace_id: row.get(5)?,
+                folder_id: row.get(6)?,
+                is_favorite: row.get(7)?,
+                is_deleted: row.get(8)?,
+                is_pinned: row.get(9)?,
+                author: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+                deleted_at: row.get(13)?,
+                word_count: row.get(14)?,
+                read_time_minutes: row.get(15)?,
+                server_ver: row.get(16)?,
+                is_dirty: row.get(17)?,
+                last_synced_at: row.get(18)?,
             })
         }) {
             Ok(note) => Ok(Some(note)),
@@ -499,11 +732,12 @@ impl SyncService {
     fn build_sync_request(&self) -> Result<SyncRequest> {
         use crate::models::ConflictStrategy;
 
+        let dirty_workspaces = self.get_dirty_workspaces()?;
         let dirty_notes = self.get_dirty_notes()?;
         let dirty_folders = self.get_dirty_folders()?;
 
-        log::info!("[SyncService] 构建同步请求: dirty_notes={}, dirty_folders={}",
-            dirty_notes.len(), dirty_folders.len());
+        log::info!("[SyncService] 构建同步请求: dirty_workspaces={}, dirty_notes={}, dirty_folders={}",
+            dirty_workspaces.len(), dirty_notes.len(), dirty_folders.len());
 
         // 添加调试日志
         if !dirty_notes.is_empty() {
@@ -514,6 +748,7 @@ impl SyncService {
         }
 
         Ok(SyncRequest {
+            workspaces: Some(dirty_workspaces.into_iter().map(|w| w.into()).collect()),
             notes: Some(dirty_notes.into_iter().map(|n| n.into()).collect()),
             folders: Some(dirty_folders.into_iter().map(|f| f.into()).collect()),
             tags: Some(self.get_dirty_tags()?.into_iter().map(|t| t.into()).collect()),
@@ -541,12 +776,13 @@ impl SyncService {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 color: row.get(2)?,
-                created_at: row.get(3)?,
-                updated_at: row.get(4)?,
-                deleted_at: row.get(5)?,
-                server_ver: row.get(6)?,
-                is_dirty: row.get(7)?,
-                last_synced_at: row.get(8)?,
+                workspace_id: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+                deleted_at: row.get(6)?,
+                server_ver: row.get(7)?,
+                is_dirty: row.get(8)?,
+                last_synced_at: row.get(9)?,
                 is_deleted: false,
             })
         })
@@ -562,14 +798,40 @@ impl SyncService {
         let conn = self.pool.get()
             .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
 
+        // 获取当前 workspace_id（通过当前用户的 is_current 标记）
+        let workspace_id: Option<String> = {
+            // 获取当前用户 ID
+            let user_id: Option<String> = conn
+                .query_row(
+                    "SELECT user_id FROM user_auth WHERE is_current = 1 LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            match user_id {
+                Some(uid) => {
+                    // 查询该用户的当前工作空间（is_current = 1）
+                    conn
+                        .query_row(
+                            "SELECT id FROM workspaces WHERE user_id = ? AND is_current = 1 AND is_deleted = 0 LIMIT 1",
+                            params![&uid],
+                            |row| row.get(0),
+                        )
+                        .ok()
+                }
+                None => None,  // 未登录
+            }
+        };
+
         let mut stmt = conn.prepare(
             "SELECT id, note_id, title, content, snapshot_name,
-                    created_at, server_ver, is_dirty, last_synced_at
+                    created_at, workspace_id, server_ver, is_dirty, last_synced_at
              FROM note_snapshots
-             WHERE is_dirty = 1"
+             WHERE is_dirty = 1 AND (workspace_id = ? OR workspace_id IS NULL)"
         ).map_err(|e| AppError::DatabaseError(format!("Failed to get dirty snapshots: {}", e)))?;
 
-        let snapshots = stmt.query_map([], |row| {
+        let snapshots = stmt.query_map(params![workspace_id], |row| {
             Ok(NoteSnapshot {
                 id: row.get(0)?,
                 note_id: row.get(1)?,
@@ -577,9 +839,10 @@ impl SyncService {
                 content: row.get(3)?,
                 snapshot_name: row.get(4)?,
                 created_at: row.get(5)?,
-                server_ver: row.get(6)?,
-                is_dirty: row.get(7)?,
-                last_synced_at: row.get(8)?,
+                workspace_id: row.get(6)?,
+                server_ver: row.get(7)?,
+                is_dirty: row.get(8)?,
+                last_synced_at: row.get(9)?,
             })
         })
         .map_err(|e| AppError::DatabaseError(format!("Failed to parse snapshots: {}", e)))?
@@ -623,11 +886,19 @@ impl SyncService {
         let sync_time = response.last_sync_at;
 
         // 1. 应用 upserted 数据（新增或更新），统计实际应用的数量
+        let mut actually_applied_workspaces = 0usize;
         let mut actually_applied_notes = 0usize;
         let mut actually_applied_folders = 0usize;
         let mut actually_applied_tags = 0usize;
         let mut actually_applied_snapshots = 0usize;
         let mut actually_applied_note_tags = 0usize;
+
+        // ✅ 优先应用 workspaces（其他数据依赖 workspace_id）
+        for workspace in &response.upserted_workspaces {
+            if self.apply_server_workspace_v2(workspace, sync_time)? {
+                actually_applied_workspaces += 1;
+            }
+        }
 
         for note in &response.upserted_notes {
             if self.apply_server_note_v2(note, sync_time)? {
@@ -656,6 +927,9 @@ impl SyncService {
         }
 
         // 2. 应用 deleted 数据（使用软删除）
+        for workspace_id in &response.deleted_workspace_ids {
+            self.mark_workspace_deleted(workspace_id)?;
+        }
         for note_id in &response.deleted_note_ids {
             self.mark_note_deleted(note_id)?;
         }
@@ -673,12 +947,13 @@ impl SyncService {
 
         // 4. 返回修正后的统计（使用实际应用的数量）
         let mut corrected_response = response.clone();
+        corrected_response.pulled_workspaces = actually_applied_workspaces;
         corrected_response.pulled_notes = actually_applied_notes;
         corrected_response.pulled_folders = actually_applied_folders;
         corrected_response.pulled_tags = actually_applied_tags;
         corrected_response.pulled_snapshots = actually_applied_snapshots;
         corrected_response.pulled_note_tags = actually_applied_note_tags;
-        corrected_response.pulled_total = actually_applied_notes + actually_applied_folders
+        corrected_response.pulled_total = actually_applied_workspaces + actually_applied_notes + actually_applied_folders
             + actually_applied_tags + actually_applied_snapshots + actually_applied_note_tags;
 
         Ok(corrected_response)
@@ -690,6 +965,17 @@ impl SyncService {
             .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
 
         log::info!("[SyncService] 开始清理脏标记: sync_time={}", sync_time);
+
+        // ✅ 清理 workspaces
+        if let Some(workspaces) = &request.workspaces {
+            log::info!("[SyncService] 清理 {} 个工作空间的脏标记", workspaces.len());
+            for workspace in workspaces {
+                conn.execute(
+                    "UPDATE workspaces SET is_dirty = 0, last_synced_at = ? WHERE id = ?",
+                    (sync_time, &workspace.id),
+                ).map_err(|e| AppError::DatabaseError(format!("清除工作空间脏标记失败: {}", e)))?;
+            }
+        }
 
         // 清理 notes
         if let Some(notes) = &request.notes {
@@ -760,6 +1046,32 @@ impl SyncService {
         let conn = self.pool.get()
             .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
 
+        // 获取当前工作空间 ID（通过当前用户的 is_current 标记）
+        let workspace_id: Option<String> = {
+            // 获取当前用户 ID
+            let user_id: Option<String> = conn
+                .query_row(
+                    "SELECT user_id FROM user_auth WHERE is_current = 1 LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            match user_id {
+                Some(uid) => {
+                    // 查询该用户的当前工作空间（is_current = 1）
+                    conn
+                        .query_row(
+                            "SELECT id FROM workspaces WHERE user_id = ? AND is_current = 1 AND is_deleted = 0 LIMIT 1",
+                            params![&uid],
+                            |row| row.get(0),
+                        )
+                        .ok()
+                }
+                None => None,  // 未登录
+            }
+        };
+
         // 检查本地笔记的 server_ver，只在服务器更新时才应用
         let local_server_ver: Option<i32> = conn.query_row(
             "SELECT server_ver FROM notes WHERE id = ?",
@@ -783,18 +1095,19 @@ impl SyncService {
 
         let rows_affected = conn.execute(
             "INSERT INTO notes
-             (id, title, content, excerpt, markdown_cache, folder_id,
+             (id, title, content, excerpt, markdown_cache, folder_id, workspace_id,
               is_favorite, is_deleted, is_pinned, author,
               created_at, updated_at, deleted_at, word_count, read_time_minutes,
               server_ver, is_dirty, last_synced_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-                     ?11, ?12, ?13, ?14, ?15, ?16, 0, ?17)
+                     ?11, ?12, ?13, ?14, ?15, ?16, ?17, 0, ?18)
              ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 content = excluded.content,
                 excerpt = excluded.excerpt,
                 markdown_cache = COALESCE(excluded.markdown_cache, notes.markdown_cache),
                 folder_id = excluded.folder_id,
+                workspace_id = excluded.workspace_id,
                 is_favorite = excluded.is_favorite,
                 is_deleted = excluded.is_deleted,
                 is_pinned = excluded.is_pinned,
@@ -808,9 +1121,10 @@ impl SyncService {
                 last_synced_at = excluded.last_synced_at",
             [
                 &note.id as &dyn rusqlite::ToSql, &note.title, &note.content, &note.excerpt,
-                &note.markdown_cache, &note.folder_id, &note.is_favorite as &dyn rusqlite::ToSql,
-                &note.is_deleted as &dyn rusqlite::ToSql, &note.is_pinned as &dyn rusqlite::ToSql,
-                &note.author, &note.created_at as &dyn rusqlite::ToSql, &note.updated_at as &dyn rusqlite::ToSql,
+                &note.markdown_cache, &note.folder_id, &workspace_id,
+                &note.is_favorite as &dyn rusqlite::ToSql, &note.is_deleted as &dyn rusqlite::ToSql,
+                &note.is_pinned as &dyn rusqlite::ToSql, &note.author,
+                &note.created_at as &dyn rusqlite::ToSql, &note.updated_at as &dyn rusqlite::ToSql,
                 &note.deleted_at as &dyn rusqlite::ToSql, &note.word_count as &dyn rusqlite::ToSql,
                 &note.read_time_minutes as &dyn rusqlite::ToSql, &note.server_ver as &dyn rusqlite::ToSql,
                 &sync_time as &dyn rusqlite::ToSql,
@@ -828,6 +1142,32 @@ impl SyncService {
         let folder: Folder = server_folder.clone().into();
         let conn = self.pool.get()
             .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
+
+        // 获取当前工作空间 ID（通过当前用户的 is_current 标记）
+        let workspace_id: Option<String> = {
+            // 获取当前用户 ID
+            let user_id: Option<String> = conn
+                .query_row(
+                    "SELECT user_id FROM user_auth WHERE is_current = 1 LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            match user_id {
+                Some(uid) => {
+                    // 查询该用户的当前工作空间（is_current = 1）
+                    conn
+                        .query_row(
+                            "SELECT id FROM workspaces WHERE user_id = ? AND is_current = 1 AND is_deleted = 0 LIMIT 1",
+                            params![&uid],
+                            |row| row.get(0),
+                        )
+                        .ok()
+                }
+                None => None,  // 未登录
+            }
+        };
 
         // 检查本地文件夹的 server_ver，只在服务器更新时才应用
         let local_server_ver: Option<i32> = conn.query_row(
@@ -852,16 +1192,17 @@ impl SyncService {
 
         conn.execute(
             "INSERT INTO folders
-             (id, name, parent_id, icon, color, sort_order,
+             (id, name, parent_id, icon, color, sort_order, workspace_id,
               is_deleted, created_at, updated_at, deleted_at,
               server_ver, is_dirty, last_synced_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0, ?13)
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 parent_id = excluded.parent_id,
                 icon = COALESCE(excluded.icon, folders.icon),
                 color = COALESCE(excluded.color, folders.color),
                 sort_order = excluded.sort_order,
+                workspace_id = excluded.workspace_id,
                 is_deleted = excluded.is_deleted,
                 updated_at = excluded.updated_at,
                 deleted_at = excluded.deleted_at,
@@ -870,11 +1211,11 @@ impl SyncService {
                 last_synced_at = excluded.last_synced_at",
             (
                 &folder.id, &folder.name, &folder.parent_id, &folder.icon,
-                &folder.color, folder.sort_order, folder.is_deleted,
-                folder.created_at, folder.updated_at, folder.deleted_at,
+                &folder.color, folder.sort_order, &workspace_id,
+                folder.is_deleted, folder.created_at, sync_time, folder.deleted_at,
                 server_folder.server_ver, sync_time,
             ),
-        ).map_err(|e| AppError::DatabaseError(format!("应用服务器文件夹失败: {}", e)))?;
+        ).map_err(|e| AppError::DatabaseError(format!("Failed to apply server folder: {}", e)))?;
 
         Ok(true)  // ✅ 成功应用了数据
     }
@@ -884,6 +1225,32 @@ impl SyncService {
         let tag: Tag = server_tag.clone().into();
         let conn = self.pool.get()
             .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
+
+        // 获取当前工作空间 ID（通过当前用户的 is_current 标记）
+        let workspace_id: Option<String> = {
+            // 获取当前用户 ID
+            let user_id: Option<String> = conn
+                .query_row(
+                    "SELECT user_id FROM user_auth WHERE is_current = 1 LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            match user_id {
+                Some(uid) => {
+                    // 查询该用户的当前工作空间（is_current = 1）
+                    conn
+                        .query_row(
+                            "SELECT id FROM workspaces WHERE user_id = ? AND is_current = 1 AND is_deleted = 0 LIMIT 1",
+                            params![&uid],
+                            |row| row.get(0),
+                        )
+                        .ok()
+                }
+                None => None,  // 未登录
+            }
+        };
 
         // 检查本地标签的 server_ver
         let local_server_ver: Option<i32> = conn.query_row(
@@ -906,18 +1273,19 @@ impl SyncService {
 
         conn.execute(
             "INSERT INTO tags
-             (id, name, color, created_at, updated_at, deleted_at, server_ver, is_dirty, last_synced_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8)
+             (id, name, color, workspace_id, created_at, updated_at, deleted_at, server_ver, is_dirty, last_synced_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9)
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 color = COALESCE(excluded.color, tags.color),
+                workspace_id = excluded.workspace_id,
                 updated_at = excluded.updated_at,
                 deleted_at = excluded.deleted_at,
                 server_ver = excluded.server_ver,
                 is_dirty = 0,
                 last_synced_at = excluded.last_synced_at",
             (
-                &tag.id, &tag.name, &tag.color, tag.created_at, tag.updated_at,
+                &tag.id, &tag.name, &tag.color, &workspace_id, tag.created_at, tag.updated_at,
                 tag.deleted_at, server_tag.server_ver, sync_time,
             ),
         ).map_err(|e| AppError::DatabaseError(format!("应用服务器标签失败: {}", e)))?;
@@ -930,6 +1298,32 @@ impl SyncService {
         let snapshot: NoteSnapshot = server_snapshot.clone().into();
         let conn = self.pool.get()
             .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
+
+        // 获取当前工作空间 ID（通过当前用户的 is_current 标记）
+        let workspace_id: Option<String> = {
+            // 获取当前用户 ID
+            let user_id: Option<String> = conn
+                .query_row(
+                    "SELECT user_id FROM user_auth WHERE is_current = 1 LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            match user_id {
+                Some(uid) => {
+                    // 查询该用户的当前工作空间（is_current = 1）
+                    conn
+                        .query_row(
+                            "SELECT id FROM workspaces WHERE user_id = ? AND is_current = 1 AND is_deleted = 0 LIMIT 1",
+                            params![&uid],
+                            |row| row.get(0),
+                        )
+                        .ok()
+                }
+                None => None,  // 未登录
+            }
+        };
 
         // 检查本地快照的 server_ver
         let local_server_ver: Option<i32> = conn.query_row(
@@ -952,21 +1346,22 @@ impl SyncService {
 
         conn.execute(
             "INSERT INTO note_snapshots
-             (id, note_id, title, content, snapshot_name,
+             (id, note_id, title, content, snapshot_name, workspace_id,
               created_at, server_ver, is_dirty, last_synced_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9)
              ON CONFLICT(id) DO UPDATE SET
                 note_id = excluded.note_id,
                 title = excluded.title,
                 content = excluded.content,
                 snapshot_name = COALESCE(excluded.snapshot_name, note_snapshots.snapshot_name),
+                workspace_id = excluded.workspace_id,
                 created_at = excluded.created_at,
                 server_ver = excluded.server_ver,
                 is_dirty = 0,
                 last_synced_at = excluded.last_synced_at",
             (
                 &snapshot.id, &snapshot.note_id, &snapshot.title,
-                &snapshot.content, &snapshot.snapshot_name,
+                &snapshot.content, &snapshot.snapshot_name, &workspace_id,
                 snapshot.created_at,
                 server_snapshot.server_ver,
                 sync_time,
@@ -982,10 +1377,36 @@ impl SyncService {
         let conn = self.pool.get()
             .map_err(|e| AppError::DatabaseError(format!("Failed to get connection: {}", e)))?;
 
+        // 获取当前工作空间 ID（通过当前用户的 is_current 标记）
+        let workspace_id: Option<String> = {
+            // 获取当前用户 ID
+            let user_id: Option<String> = conn
+                .query_row(
+                    "SELECT user_id FROM user_auth WHERE is_current = 1 LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            match user_id {
+                Some(uid) => {
+                    // 查询该用户的当前工作空间（is_current = 1）
+                    conn
+                        .query_row(
+                            "SELECT id FROM workspaces WHERE user_id = ? AND is_current = 1 AND is_deleted = 0 LIMIT 1",
+                            params![&uid],
+                            |row| row.get(0),
+                        )
+                        .ok()
+                }
+                None => None,  // 未登录
+            }
+        };
+
         let rows_affected = conn.execute(
-            "INSERT OR IGNORE INTO note_tags (note_id, tag_id, created_at)
-             VALUES (?1, ?2, ?3)",
-            (&relation.note_id, &relation.tag_id, relation.created_at),
+            "INSERT OR IGNORE INTO note_tags (note_id, tag_id, workspace_id, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            (&relation.note_id, &relation.tag_id, &workspace_id, relation.created_at),
         ).map_err(|e| AppError::DatabaseError(format!("应用服务器笔记标签关联失败: {}", e)))?;
 
         // rows_affected > 0 表示真的插入了新数据，= 0 表示已存在（被 IGNORE）

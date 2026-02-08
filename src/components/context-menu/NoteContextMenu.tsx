@@ -8,6 +8,7 @@ import {
     Trash2,
     Cloud,
 } from "lucide-react";
+import { useState } from "react";
 import { ContextMenu, MenuItem, MenuSeparator } from "./ContextMenu";
 import { useNoteStore } from "@/store/noteStore";
 import { useSyncStore } from "@/store/syncStore";
@@ -15,6 +16,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { tiptapJsonToMarkdown } from "@/lib/tiptapMarkdown";
 import { useAuthStore } from "@/store/authStore";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 interface NoteContextMenuProps {
     position: { x: number; y: number };
@@ -39,6 +41,10 @@ export function NoteContextMenu({
     const { syncSingleNote } = useSyncStore();
 
     const note = noteId ? getNote(noteId) : null;
+
+    // 删除确认对话框状态
+    const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+    const [isDeleting, setIsDeleting] = useState(false);
 
     const handleSyncSingle = async () => {
         if (!note) return;
@@ -138,89 +144,114 @@ export function NoteContextMenu({
 
     const handleDelete = () => {
         if (!note) return;
+        // 打开确认对话框
+        setIsDeleteDialogOpen(true);
+        // 关闭右键菜单
+        onClose();
+    };
 
-        if (!confirm(`确定要删除笔记 "${note.title}" 吗？此操作无法撤销。`)) {
-            return;
+    const confirmDelete = async () => {
+        if (!note) return;
+
+        setIsDeleting(true);
+        try {
+            await deleteNote(note.id);
+            toast.success("笔记已删除");
+            setIsDeleteDialogOpen(false);
+        } catch (error) {
+            console.error("Failed to delete note:", error);
+            toast.error("删除失败");
+        } finally {
+            setIsDeleting(false);
         }
+    };
 
-        deleteNote(note.id)
-            .then(() => {
-                toast.success("笔记已删除");
-                onClose();
-            })
-            .catch((error) => {
-                console.error("Failed to delete note:", error);
-                toast.error("删除失败");
-            });
+    const cancelDelete = () => {
+        setIsDeleteDialogOpen(false);
+        setIsDeleting(false);
     };
 
     return (
-        <ContextMenu
-            position={position}
-            isVisible={isVisible}
-            onClose={onClose}
-        >
-            <MenuItem
-                icon={<FileEdit className="w-4 h-4" />}
-                label="打开"
-                onClick={handleOpen}
-            />
-            <MenuItem
-                icon={<ExternalLink className="w-4 h-4" />}
-                label="在新标签页打开"
-                onClick={handleOpenInNewTab}
-            />
-
-            <MenuSeparator />
-
-            <MenuItem
-                icon={<Star className="w-4 h-4" />}
-                label={note?.isFavorite ? "取消收藏" : "收藏"}
-                onClick={handleToggleFavorite}
-            />
-            <MenuItem
-                icon={<FileEdit className="w-4 h-4" />}
-                label="重命名"
-                onClick={handleRename}
-            />
-
-            <MenuSeparator />
-
-            {/* 云同步功能（仅登录时显示） */}
-            {isAuthenticated && (
+        <>
+            <ContextMenu
+                position={position}
+                isVisible={isVisible}
+                onClose={onClose}
+            >
                 <MenuItem
-                    icon={<Cloud className="w-4 h-4" />}
-                    label="同步到云端"
-                    onClick={handleSyncSingle}
+                    icon={<FileEdit className="w-4 h-4" />}
+                    label="打开"
+                    onClick={handleOpen}
                 />
-            )}
+                <MenuItem
+                    icon={<ExternalLink className="w-4 h-4" />}
+                    label="在新标签页打开"
+                    onClick={handleOpenInNewTab}
+                />
 
-            <MenuSeparator />
+                <MenuSeparator />
 
-            <MenuItem
-                icon={<Copy className="w-4 h-4" />}
-                label="复制 Markdown"
-                onClick={handleCopy}
-            />
-            <MenuItem
-                icon={<Download className="w-4 h-4" />}
-                label="导出"
-                onClick={handleExport}
-            />
-            <MenuItem
-                icon={<FolderOpen className="w-4 h-4" />}
-                label="移动到..."
-                onClick={handleMove}
-            />
+                <MenuItem
+                    icon={<Star className="w-4 h-4" />}
+                    label={note?.isFavorite ? "取消收藏" : "收藏"}
+                    onClick={handleToggleFavorite}
+                />
+                <MenuItem
+                    icon={<FileEdit className="w-4 h-4" />}
+                    label="重命名"
+                    onClick={handleRename}
+                />
 
-            <MenuSeparator />
+                <MenuSeparator />
 
-            <MenuItem
-                icon={<Trash2 className="w-4 h-4" />}
-                label="删除"
-                onClick={handleDelete}
-                danger
+                {/* 云同步功能（仅登录时显示） */}
+                {isAuthenticated && (
+                    <MenuItem
+                        icon={<Cloud className="w-4 h-4" />}
+                        label="同步到云端"
+                        onClick={handleSyncSingle}
+                    />
+                )}
+
+                <MenuSeparator />
+
+                <MenuItem
+                    icon={<Copy className="w-4 h-4" />}
+                    label="复制 Markdown"
+                    onClick={handleCopy}
+                />
+                <MenuItem
+                    icon={<Download className="w-4 h-4" />}
+                    label="导出"
+                    onClick={handleExport}
+                />
+                <MenuItem
+                    icon={<FolderOpen className="w-4 h-4" />}
+                    label="移动到..."
+                    onClick={handleMove}
+                />
+
+                <MenuSeparator />
+
+                <MenuItem
+                    icon={<Trash2 className="w-4 h-4" />}
+                    label="删除"
+                    onClick={handleDelete}
+                    danger
+                />
+            </ContextMenu>
+
+            {/* 删除确认对话框 */}
+            <ConfirmDialog
+                isOpen={isDeleteDialogOpen}
+                title="删除笔记"
+                description={`确定要删除笔记 "${note?.title}" 吗？此操作无法撤销。`}
+                confirmLabel="删除"
+                cancelLabel="取消"
+                onConfirm={confirmDelete}
+                onCancel={cancelDelete}
+                isLoading={isDeleting}
             />
-        </ContextMenu>
+        </>
     );
 }

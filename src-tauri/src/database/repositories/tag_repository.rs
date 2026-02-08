@@ -12,28 +12,60 @@ impl TagRepository {
         Self { pool }
     }
 
+    /// 获取当前工作空间 ID（基于当前用户的 is_current 标记）
+    fn get_current_workspace_id(&self) -> Result<Option<String>> {
+        let conn = self.pool.get()?;
+
+        // 获取当前用户 ID
+        let user_id: Option<String> = conn
+            .query_row(
+                "SELECT user_id FROM user_auth WHERE is_current = 1 LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+
+        let user_id = match user_id {
+            Some(uid) => uid,
+            None => return Ok(None),  // 未登录
+        };
+
+        // 查询该用户的当前工作空间（is_current = 1）
+        let workspace_id: Option<String> = conn
+            .query_row(
+                "SELECT id FROM workspaces WHERE user_id = ? AND is_current = 1 AND is_deleted = 0 LIMIT 1",
+                params![&user_id],
+                |row| row.get(0),
+            )
+            .ok();
+
+        Ok(workspace_id)
+    }
+
     /// 获取所有标签
     pub fn find_all(&self) -> Result<Vec<Tag>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT id, name, color, created_at, updated_at, is_deleted, deleted_at, server_ver, is_dirty, last_synced_at
+            "SELECT id, name, color, workspace_id, created_at, updated_at, is_deleted, deleted_at, server_ver, is_dirty, last_synced_at
              FROM tags
-             WHERE is_deleted = 0
+             WHERE is_deleted = 0 AND (workspace_id = ? OR workspace_id IS NULL)
              ORDER BY name"
         )?;
 
-        let tags = stmt.query_map([], |row| {
+        let workspace_id = self.get_current_workspace_id()?;
+        let tags = stmt.query_map(params![workspace_id], |row| {
             Ok(Tag {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 color: row.get(2)?,
-                created_at: row.get(3)?,
-                updated_at: row.get(4)?,
-                is_deleted: row.get(5)?,
-                deleted_at: row.get(6)?,
-                server_ver: row.get(7)?,
-                is_dirty: row.get(8)?,
-                last_synced_at: row.get(9)?,
+                workspace_id: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+                is_deleted: row.get(6)?,
+                deleted_at: row.get(7)?,
+                server_ver: row.get(8)?,
+                is_dirty: row.get(9)?,
+                last_synced_at: row.get(10)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -45,7 +77,7 @@ impl TagRepository {
     pub fn find_by_id(&self, id: &str) -> Result<Option<Tag>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT id, name, color, created_at, updated_at, is_deleted, deleted_at, server_ver, is_dirty, last_synced_at
+            "SELECT id, name, color, workspace_id, created_at, updated_at, is_deleted, deleted_at, server_ver, is_dirty, last_synced_at
              FROM tags WHERE id = ?1 AND is_deleted = 0"
         )?;
 
@@ -54,13 +86,14 @@ impl TagRepository {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 color: row.get(2)?,
-                created_at: row.get(3)?,
-                updated_at: row.get(4)?,
-                is_deleted: row.get(5)?,
-                deleted_at: row.get(6)?,
-                server_ver: row.get(7)?,
-                is_dirty: row.get(8)?,
-                last_synced_at: row.get(9)?,
+                workspace_id: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+                is_deleted: row.get(6)?,
+                deleted_at: row.get(7)?,
+                server_ver: row.get(8)?,
+                is_dirty: row.get(9)?,
+                last_synced_at: row.get(10)?,
             })
         });
 
@@ -75,25 +108,27 @@ impl TagRepository {
     pub fn find_by_note_id(&self, note_id: &str) -> Result<Vec<Tag>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT t.id, t.name, t.color, t.created_at, t.updated_at, t.is_deleted, t.deleted_at, t.server_ver, t.is_dirty, t.last_synced_at
+            "SELECT t.id, t.name, t.color, t.workspace_id, t.created_at, t.updated_at, t.is_deleted, t.deleted_at, t.server_ver, t.is_dirty, t.last_synced_at
              FROM tags t
              INNER JOIN note_tags nt ON t.id = nt.tag_id AND nt.is_deleted = 0
-             WHERE nt.note_id = ?1 AND t.is_deleted = 0
+             WHERE nt.note_id = ?1 AND t.is_deleted = 0 AND (t.workspace_id = ?2 OR t.workspace_id IS NULL)
              ORDER BY t.name"
         )?;
 
-        let tags = stmt.query_map(params![note_id], |row| {
+        let workspace_id = self.get_current_workspace_id()?;
+        let tags = stmt.query_map(params![note_id, workspace_id], |row| {
             Ok(Tag {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 color: row.get(2)?,
-                created_at: row.get(3)?,
-                updated_at: row.get(4)?,
-                is_deleted: row.get(5)?,
-                deleted_at: row.get(6)?,
-                server_ver: row.get(7)?,
-                is_dirty: row.get(8)?,
-                last_synced_at: row.get(9)?,
+                workspace_id: row.get(3)?,
+                created_at: row.get(4)?,
+                updated_at: row.get(5)?,
+                is_deleted: row.get(6)?,
+                deleted_at: row.get(7)?,
+                server_ver: row.get(8)?,
+                is_dirty: row.get(9)?,
+                last_synced_at: row.get(10)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -129,18 +164,20 @@ impl TagRepository {
     pub fn create(&self, req: &CreateTagRequest) -> Result<Tag> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().timestamp();
+        let workspace_id = self.get_current_workspace_id()?;
 
         let conn = self.pool.get()?;
         conn.execute(
-            "INSERT INTO tags (id, name, color, created_at, updated_at, is_deleted, deleted_at, server_ver, is_dirty, last_synced_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, 0, NULL, 1, 1, NULL)",
-            params![&id, &req.name, &req.color, now, now],
+            "INSERT INTO tags (id, name, color, workspace_id, created_at, updated_at, is_deleted, deleted_at, server_ver, is_dirty, last_synced_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, NULL, 1, 1, NULL)",
+            params![&id, &req.name, &req.color, workspace_id, now, now],
         )?;
 
         Ok(Tag {
             id,
             name: req.name.clone(),
             color: req.color.clone(),
+            workspace_id,
             created_at: now,
             updated_at: now,
             is_deleted: false,
@@ -160,6 +197,7 @@ impl TagRepository {
             id: id.to_string(),
             name: req.name.clone().unwrap_or(current.name),
             color: req.color.clone().or(current.color),
+            workspace_id: current.workspace_id,
             created_at: current.created_at,
             updated_at: chrono::Utc::now().timestamp(),
             is_deleted: current.is_deleted,
@@ -205,11 +243,12 @@ impl TagRepository {
     pub fn add_tag_to_note(&self, req: &NoteTagRequest) -> Result<()> {
         let conn = self.pool.get()?;
         let now = chrono::Utc::now().timestamp();
+        let workspace_id = self.get_current_workspace_id()?;
 
         conn.execute(
-            "INSERT OR IGNORE INTO note_tags (note_id, tag_id, created_at)
-             VALUES (?1, ?2, ?3)",
-            params![&req.note_id, &req.tag_id, now],
+            "INSERT OR IGNORE INTO note_tags (note_id, tag_id, workspace_id, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![&req.note_id, &req.tag_id, workspace_id, now],
         )?;
         Ok(())
     }
@@ -227,6 +266,7 @@ impl TagRepository {
     /// 设置笔记的标签（替换所有标签）
     pub fn set_note_tags(&self, note_id: &str, tag_ids: &[String]) -> Result<()> {
         let conn = self.pool.get()?;
+        let workspace_id = self.get_current_workspace_id()?;
 
         // 先删除现有标签
         conn.execute(
@@ -238,9 +278,9 @@ impl TagRepository {
         let now = chrono::Utc::now().timestamp();
         for tag_id in tag_ids {
             conn.execute(
-                "INSERT INTO note_tags (note_id, tag_id, created_at)
-                 VALUES (?1, ?2, ?3)",
-                params![note_id, tag_id, now],
+                "INSERT INTO note_tags (note_id, tag_id, workspace_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![note_id, tag_id, workspace_id, now],
             )?;
         }
 

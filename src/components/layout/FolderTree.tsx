@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { useNoteStore } from '@/store/noteStore'
 import { cn } from '@/lib/utils'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { FolderInlineInput } from './FolderInlineInput'
 
 interface FolderNode {
   id: string
@@ -19,9 +20,12 @@ interface FolderNode {
 export function FolderTree() {
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
-  const { folders } = useNoteStore()
+  const { folders, createFolder } = useNoteStore()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+
+  // 新建文件夹输入框状态
+  const [isCreatingRoot, setIsCreatingRoot] = useState(false)
 
   // 构建文件夹树结构
   const buildTree = (): FolderNode[] => {
@@ -66,6 +70,16 @@ export function FolderTree() {
     const hasChildren = folder.children.length > 0
     const isActive = searchParams.get('folder') === folder.id
 
+    // 子文件夹创建状态
+    const [isCreatingSub, setIsCreatingSub] = useState(false)
+
+    const handleCreateSubfolder = async (name: string) => {
+      await createFolder(name, folder.id)
+      setIsCreatingSub(false)
+      // 自动展开父文件夹，显示新创建的子文件夹
+      setExpandedFolders(prev => new Set([...prev, folder.id]))
+    }
+
     return (
       <div key={folder.id}>
         <div
@@ -103,6 +117,16 @@ export function FolderTree() {
         {isExpanded && hasChildren && (
           <div>
             {folder.children.map(child => renderFolder(child, level + 1))}
+
+            {/* 新建子文件夹输入框 */}
+            {isCreatingSub && (
+              <FolderInlineInput
+                parentId={folder.id}
+                level={level + 1}
+                onCreate={handleCreateSubfolder}
+                onCancel={() => setIsCreatingSub(false)}
+              />
+            )}
           </div>
         )}
       </div>
@@ -197,17 +221,26 @@ export function FolderTree() {
       {/* 底部操作 */}
       {!isCollapsed && (
         <div className="p-2 border-t border-border">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full justify-start"
-            onClick={() => {
-              // TODO: 实现新建文件夹对话框
-            }}
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            新建文件夹
-          </Button>
+          {isCreatingRoot ? (
+            <FolderInlineInput
+              parentId={null}
+              onCreate={async (name) => {
+                await createFolder(name)
+                setIsCreatingRoot(false)
+              }}
+              onCancel={() => setIsCreatingRoot(false)}
+            />
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start"
+              onClick={() => setIsCreatingRoot(true)}
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              新建文件夹
+            </Button>
+          )}
         </div>
       )}
     </aside>

@@ -92,26 +92,24 @@ pub async fn register(
 
     // 1. 检查邮箱是否已存在
     let exists = service.check_email_exists(&payload.email).await
-        .map_err(|e| ErrorResponse { error: format!("检查邮箱失败: {}", e) })?;
+        .map_err(|e| ErrorResponse::new(format!("检查邮箱失败: {}", e)))?;
 
     if exists {
         log_info(&request_id, "邮箱已注册", &payload.email);
-        return Err(ErrorResponse {
-            error: "邮箱已注册".to_string(),
-        });
+        return Err(ErrorResponse::new("邮箱已注册".to_string()));
     }
 
     // 2. 哈希密码（同步操作）
     let password_hash = service.hash_password(&payload.password)
-        .map_err(|e| ErrorResponse { error: format!("密码哈希失败: {}", e) })?;
+        .map_err(|e| ErrorResponse::new(format!("密码哈希失败: {}", e)))?;
 
     // 3. 生成唯一的用户 ID
     let user_id = service.generate_unique_user_id().await
-        .map_err(|e| ErrorResponse { error: format!("生成用户 ID 失败: {}", e) })?;
+        .map_err(|e| ErrorResponse::new(format!("生成用户 ID 失败: {}", e)))?;
 
     // 4. 创建用户
     let created_at = service.create_user(&payload.email, &password_hash, &user_id).await
-        .map_err(|e| ErrorResponse { error: format!("创建用户失败: {}", e) })?;
+        .map_err(|e| ErrorResponse::new(format!("创建用户失败: {}", e)))?;
 
     // 5. 注册设备（使用客户端提供的 device_id 或生成默认值）
     let client_device_id = payload.device_id.clone().unwrap_or_else(|| {
@@ -161,13 +159,13 @@ pub async fn register(
     ));
 
     let device = device_service.register_or_update(&user_id, &final_device_id, &device_name, device_type).await
-        .map_err(|e| ErrorResponse { error: format!("注册设备失败: {}", e) })?;
+        .map_err(|e| ErrorResponse::new(format!("注册设备失败: {}", e)))?;
 
     log_info(&request_id, "设备注册成功", &format!("device_id={}, name={}", device.id, device_name));
 
     // 6. 生成 token 并完成注册
     let (user, token, refresh_token) = service.complete_registration(&user_id, &payload.email, created_at, Some(device.id.clone())).await
-        .map_err(|e| ErrorResponse { error: format!("生成 token 失败: {}", e) })?;
+        .map_err(|e| ErrorResponse::new(format!("生成 token 失败: {}", e)))?;
 
     let response = AuthResponse {
         token,
@@ -240,7 +238,7 @@ pub async fn login(
             ));
 
             let device = device_service.register_or_update(&user.id, &final_device_id, &device_name, device_type).await
-                .map_err(|e| ErrorResponse { error: format!("设备注册失败: {}", e) })?;
+                .map_err(|e| ErrorResponse::new(format!("设备注册失败: {}", e)))?;
 
             let response = AuthResponse {
                 token,
@@ -258,9 +256,7 @@ pub async fn login(
         Err(e) => {
             log_info(&request_id, "登录失败", &e.to_string());
             // 返回错误消息
-            Err(ErrorResponse {
-                error: e.to_string(),
-            })
+            Err(ErrorResponse::new(e.to_string()))
         }
     }
 }
@@ -304,23 +300,19 @@ pub async fn refresh(
                         Ok(email) => (data.claims.sub.clone(), email),
                         Err(_) => {
                             log_info(&request_id, "查询用户邮箱失败", "用户不存在");
-                            return Err(ErrorResponse {
-                                error: "用户不存在".to_string(),
-                            });
+                            return Err(ErrorResponse::new("用户不存在".to_string()));
                         }
                     }
                 }
                 Err(_) => {
                     log_info(&request_id, "解码 access_token 失败", "无效的 token");
-                    return Err(ErrorResponse {
-                        error: "无效的 access_token".to_string(),
-                    });
+                    return Err(ErrorResponse::new("无效的 access_token".to_string()));
                 }
             };
 
             // 获取或注册设备（使用默认 device_id）
             let device = device_service.register_or_update(&user_id, "default-refresh", "default", "desktop").await
-                .map_err(|e| ErrorResponse { error: format!("设备注册失败: {}", e) })?;
+                .map_err(|e| ErrorResponse::new(format!("设备注册失败: {}", e)))?;
 
             let response = AuthResponse {
                 token: access_token,
@@ -336,9 +328,7 @@ pub async fn refresh(
         }
         Err(e) => {
             log_info(&request_id, "刷新失败", &e.to_string());
-            Err(ErrorResponse {
-                error: e.to_string(),
-            })
+            Err(ErrorResponse::new(e.to_string()))
         }
     }
 }
@@ -351,16 +341,12 @@ pub async fn logout(
     let auth_header = match headers.get("Authorization").and_then(|h| h.to_str().ok()) {
         Some(h) => h,
         None => {
-            return Err(ErrorResponse {
-                error: "缺少 Authorization header".to_string(),
-            });
+            return Err(ErrorResponse::new("缺少 Authorization header".to_string()));
         }
     };
 
     if !auth_header.starts_with("Bearer ") {
-        return Err(ErrorResponse {
-            error: "无效的 Authorization 格式".to_string(),
-        });
+        return Err(ErrorResponse::new("无效的 Authorization 格式".to_string()));
     }
 
     let token = &auth_header[7..];
@@ -369,9 +355,7 @@ pub async fn logout(
     let ttl_seconds = match extract_token_ttl(token) {
         Some(ttl) => ttl,
         None => {
-            return Err(ErrorResponse {
-                error: "无效的 token".to_string(),
-            });
+            return Err(ErrorResponse::new("无效的 token".to_string()));
         }
     };
 
@@ -383,9 +367,7 @@ pub async fn logout(
         }
         Err(e) => {
             tracing::error!("将 Token 加入黑名单失败: {:?}", e);
-            Err(ErrorResponse {
-                error: format!("登出失败: {}", e),
-            })
+            Err(ErrorResponse::new(format!("登出失败: {}", e)))
         }
     }
 }
@@ -408,9 +390,7 @@ pub async fn delete_account(
         }
         Err(e) => {
             log_info(&request_id, "账号删除失败", &e.to_string());
-            Err(ErrorResponse {
-                error: e.to_string(),
-            })
+            Err(ErrorResponse::new(e.to_string()))
         }
     }
 }

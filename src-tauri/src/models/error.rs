@@ -39,6 +39,9 @@ pub enum AppError {
     #[error("同步错误: {0}")]
     SyncError(String),
 
+    #[error("同步已取消: {0}")]
+    SyncCancelled(String),
+
     #[error("加密错误: {0}")]
     EncryptionError(String),
 

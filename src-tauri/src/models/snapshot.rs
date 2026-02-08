@@ -11,6 +11,8 @@ pub struct NoteSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot_name: Option<String>,  // 快照名称（用户自定义）
     pub created_at: i64,  // 创建时间（Unix 时间戳，秒）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,  // 所属工作空间 ID
     #[serde(default)]
     pub server_ver: i32,  // 服务器版本号
     #[serde(default)]

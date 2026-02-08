@@ -4,6 +4,7 @@ pub mod folder;
 pub mod keybinding;
 pub mod editor_settings;
 pub mod tag;
+pub mod workspace;
 // ===== 云端同步相关模型 =====
 pub mod sync;
 pub mod snapshot;
@@ -18,8 +19,9 @@ pub use folder::{Folder, CreateFolderRequest, UpdateFolderRequest, MoveFolderReq
 pub use keybinding::{KeyCombination, KeybindingPreset, KeybindingsData, get_default_keybindings};
 pub use editor_settings::{EditorSettings, UpdateEditorSettingsRequest};
 pub use tag::{Tag, CreateTagRequest, UpdateTagRequest, NoteTagRequest};
+pub use workspace::{Workspace, CreateWorkspaceRequest, UpdateWorkspaceRequest};
 // ===== 云端同步相关导出 =====
-pub use sync::{SyncRequest, SyncResponse, ConflictInfo, SyncStatus, SyncReport, SyncType, NoteTagRelation, ConflictStrategy};
+pub use sync::{SyncRequest, SyncResponse, ConflictInfo, SyncStatus, SyncReport, SyncType, NoteTagRelation, ConflictStrategy, ServerWorkspace};
 pub use snapshot::{NoteSnapshot, CreateSnapshotRequest, SnapshotListItem};
 pub use auth::{LoginRequest, RegisterRequest, AuthResponse, User, AccountWithProfile};
 // CreateProfileRequest 是预留功能（用户注册时创建资料）

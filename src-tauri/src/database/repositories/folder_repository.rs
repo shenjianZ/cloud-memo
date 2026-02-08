@@ -22,7 +22,7 @@ impl FolderRepository {
     /// 统一的 SQL 查询字段列表
     /// 字段顺序必须与 Folder 结构体初始化顺序一致
     const SELECT_FIELDS: &'static str =
-        "id, name, parent_id, icon, color, sort_order, created_at, updated_at,
+        "id, name, parent_id, icon, color, sort_order, workspace_id, created_at, updated_at,
          is_deleted, deleted_at, server_ver, is_dirty, last_synced_at";
 
     /// 创建新的 FolderRepository 实例
@@ -30,11 +30,41 @@ impl FolderRepository {
         Self { pool }
     }
 
+    /// 获取当前工作空间 ID（基于当前用户的 is_current 标记）
+    pub fn get_current_workspace_id(&self) -> Result<Option<String>> {
+        let conn = self.pool.get()?;
+
+        // 获取当前用户 ID
+        let user_id: Option<String> = conn
+            .query_row(
+                "SELECT user_id FROM user_auth WHERE is_current = 1 LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+
+        let user_id = match user_id {
+            Some(uid) => uid,
+            None => return Ok(None),  // 未登录
+        };
+
+        // 查询该用户的当前工作空间（is_current = 1）
+        let workspace_id: Option<String> = conn
+            .query_row(
+                "SELECT id FROM workspaces WHERE user_id = ? AND is_current = 1 AND is_deleted = 0 LIMIT 1",
+                params![&user_id],
+                |row| row.get(0),
+            )
+            .ok();
+
+        Ok(workspace_id)
+    }
+
     /// 根据 ID 查找文件夹
     pub fn find_by_id(&self, id: &str) -> Result<Option<Folder>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT id, name, parent_id, icon, color, sort_order, created_at, updated_at,
+            "SELECT id, name, parent_id, icon, color, sort_order, workspace_id, created_at, updated_at,
                     is_deleted, deleted_at, server_ver, is_dirty, last_synced_at
              FROM folders
              WHERE id = ? AND is_deleted = 0"
@@ -48,13 +78,14 @@ impl FolderRepository {
                 icon: row.get(3)?,
                 color: row.get(4)?,
                 sort_order: row.get(5)?,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
-                is_deleted: row.get(8)?,
-                deleted_at: row.get(9)?,
-                server_ver: row.get(10)?,
-                is_dirty: row.get(11)?,
-                last_synced_at: row.get(12)?,
+                workspace_id: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+                is_deleted: row.get(9)?,
+                deleted_at: row.get(10)?,
+                server_ver: row.get(11)?,
+                is_dirty: row.get(12)?,
+                last_synced_at: row.get(13)?,
             })
         });
 
@@ -69,14 +100,15 @@ impl FolderRepository {
     pub fn find_all(&self) -> Result<Vec<Folder>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT id, name, parent_id, icon, color, sort_order, created_at, updated_at,
+            "SELECT id, name, parent_id, icon, color, sort_order, workspace_id, created_at, updated_at,
                     is_deleted, deleted_at, server_ver, is_dirty, last_synced_at
              FROM folders
-             WHERE is_deleted = 0
+             WHERE is_deleted = 0 AND (workspace_id = ? OR workspace_id IS NULL)
              ORDER BY sort_order ASC, created_at ASC"
         )?;
 
-        let folders = stmt.query_map([], |row| {
+        let workspace_id = self.get_current_workspace_id()?;
+        let folders = stmt.query_map(params![workspace_id], |row| {
             Ok(Folder {
                 id: row.get(0)?,
                 name: row.get(1)?,
@@ -84,13 +116,14 @@ impl FolderRepository {
                 icon: row.get(3)?,
                 color: row.get(4)?,
                 sort_order: row.get(5)?,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
-                is_deleted: row.get(8)?,
-                deleted_at: row.get(9)?,
-                server_ver: row.get(10)?,
-                is_dirty: row.get(11)?,
-                last_synced_at: row.get(12)?,
+                workspace_id: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+                is_deleted: row.get(9)?,
+                deleted_at: row.get(10)?,
+                server_ver: row.get(11)?,
+                is_dirty: row.get(12)?,
+                last_synced_at: row.get(13)?,
             })
         })?.collect::<std::result::Result<Vec<_>, _>>()
           .map_err(AppError::Database)?;
@@ -102,7 +135,7 @@ impl FolderRepository {
     pub fn find_by_name_include_deleted(&self, name: &str) -> Result<Option<Folder>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT id, name, parent_id, icon, color, sort_order, created_at, updated_at,
+            "SELECT id, name, parent_id, icon, color, sort_order, workspace_id, created_at, updated_at,
                     is_deleted, deleted_at, server_ver, is_dirty, last_synced_at
              FROM folders
              WHERE name = ?
@@ -117,13 +150,14 @@ impl FolderRepository {
                 icon: row.get(3)?,
                 color: row.get(4)?,
                 sort_order: row.get(5)?,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
-                is_deleted: row.get(8)?,
-                deleted_at: row.get(9)?,
-                server_ver: row.get(10)?,
-                is_dirty: row.get(11)?,
-                last_synced_at: row.get(12)?,
+                workspace_id: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+                is_deleted: row.get(9)?,
+                deleted_at: row.get(10)?,
+                server_ver: row.get(11)?,
+                is_dirty: row.get(12)?,
+                last_synced_at: row.get(13)?,
             })
         });
 
@@ -176,13 +210,14 @@ impl FolderRepository {
                 icon: row.get(3)?,
                 color: row.get(4)?,
                 sort_order: row.get(5)?,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
-                is_deleted: row.get(8)?,
-                deleted_at: row.get(9)?,
-                server_ver: row.get(10)?,
-                is_dirty: row.get(11)?,
-                last_synced_at: row.get(12)?,
+                workspace_id: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+                is_deleted: row.get(9)?,
+                deleted_at: row.get(10)?,
+                server_ver: row.get(11)?,
+                is_dirty: row.get(12)?,
+                last_synced_at: row.get(13)?,
             })
         });
 
@@ -197,12 +232,12 @@ impl FolderRepository {
     pub fn create(&self, folder: &Folder) -> Result<Folder> {
         let conn = self.pool.get()?;
         conn.execute(
-            "INSERT INTO folders (id, name, parent_id, icon, color, sort_order, created_at, updated_at,
+            "INSERT INTO folders (id, name, parent_id, icon, color, sort_order, workspace_id, created_at, updated_at,
                                 is_deleted, deleted_at, server_ver, is_dirty, last_synced_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 folder.id, folder.name, folder.parent_id, folder.icon, folder.color,
-                folder.sort_order, folder.created_at, folder.updated_at,
+                folder.sort_order, folder.workspace_id, folder.created_at, folder.updated_at,
                 folder.is_deleted as i32, folder.deleted_at,
                 folder.server_ver, folder.is_dirty as i32, folder.last_synced_at
             ],
@@ -432,13 +467,14 @@ impl FolderRepository {
             icon: row.get(3)?,
             color: row.get(4)?,
             sort_order: row.get(5)?,
-            created_at: row.get(6)?,
-            updated_at: row.get(7)?,
-            is_deleted: row.get(8)?,
-            deleted_at: row.get(9)?,
-            server_ver: row.get(10)?,
-            is_dirty: row.get(11)?,
-            last_synced_at: row.get(12)?,
+            workspace_id: row.get(6)?,
+            created_at: row.get(7)?,
+            updated_at: row.get(8)?,
+            is_deleted: row.get(9)?,
+            deleted_at: row.get(10)?,
+            server_ver: row.get(11)?,
+            is_dirty: row.get(12)?,
+            last_synced_at: row.get(13)?,
         })
     }
 

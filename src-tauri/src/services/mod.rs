@@ -3,6 +3,7 @@ pub mod folder_service;
 pub mod keybinding_service;
 pub mod editor_settings_service;
 pub mod tag_service;
+pub mod workspace_service;
 pub mod cleanup_service;
 // ===== 云端同步相关服务 =====
 pub mod sync_service;
@@ -20,6 +21,7 @@ pub use folder_service::FolderService;
 pub use keybinding_service::KeybindingService;
 pub use editor_settings_service::EditorSettingsService;
 pub use tag_service::TagService;
+pub use workspace_service::WorkspaceService;
 pub use cleanup_service::CleanupService;
 // ===== 云端同步服务导出 =====
 pub use sync_service::SyncService;

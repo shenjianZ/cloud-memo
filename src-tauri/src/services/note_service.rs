@@ -133,6 +133,7 @@ impl NoteService {
             None,  // 根目录
             Some("#4CAF50".to_string()),  // 绿色
             Some("recycle".to_string()),  // 图标
+            None,  // 工作空间 ID
         );
         folder.sort_order = RECOVERED_FOLDER_SORT_ORDER;  // 设置为最下边
         self.folder_repo.create(&folder)?;

@@ -3,6 +3,7 @@ use crate::models::Note;
 use crate::models::Folder;
 use crate::models::Tag;
 use crate::models::NoteSnapshot;
+use crate::models::Workspace;
 
 /// 同步类型枚举
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +87,7 @@ impl From<ServerNote> for Note {
             // 使用服务器返回的客户端特有字段（类型转换 i32 -> u32）
             excerpt: note.excerpt,
             markdown_cache: note.markdown_cache,
+            workspace_id: None,
             is_favorite: note.is_favorite,
             is_pinned: note.is_pinned,
             author: note.author,
@@ -148,6 +150,7 @@ impl From<ServerFolder> for Folder {
             icon: None,
             color: None,
             sort_order: 0,
+            workspace_id: None,  // 默认无工作空间
         }
     }
 }
@@ -190,6 +193,7 @@ impl From<ServerTag> for Tag {
             id: tag.id,
             name: tag.name,
             color: tag.color,
+            workspace_id: None,  // 默认无工作空间
             created_at: tag.created_at,
             updated_at: tag.updated_at,
             is_deleted: tag.is_deleted,
@@ -211,6 +215,8 @@ pub struct ServerNoteSnapshot {
     pub content: String,
     pub snapshot_name: Option<String>,
     pub created_at: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
     #[serde(default)]
     pub server_ver: i32,
 }
@@ -224,6 +230,7 @@ impl From<NoteSnapshot> for ServerNoteSnapshot {
             content: snapshot.content,
             snapshot_name: snapshot.snapshot_name,
             created_at: snapshot.created_at,
+            workspace_id: snapshot.workspace_id,
             server_ver: snapshot.server_ver,
         }
     }
@@ -238,8 +245,84 @@ impl From<ServerNoteSnapshot> for NoteSnapshot {
             content: snapshot.content,
             snapshot_name: snapshot.snapshot_name,
             created_at: snapshot.created_at,
+            workspace_id: snapshot.workspace_id,
             server_ver: snapshot.server_ver,
             // ✅ 客户端本地管理这些字段
+            is_dirty: false,
+            last_synced_at: Some(chrono::Utc::now().timestamp()),
+        }
+    }
+}
+
+/// 服务器工作空间（用于与服务器通信，snake_case）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ServerWorkspace {
+    pub id: String,
+    pub user_id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    #[serde(default)]
+    pub is_default: bool,
+    #[serde(default)]
+    pub sort_order: i32,
+    #[serde(default)]
+    pub is_deleted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted_at: Option<i64>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    #[serde(default)]
+    pub server_ver: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_by_device: Option<String>,
+}
+
+impl From<Workspace> for ServerWorkspace {
+    fn from(workspace: Workspace) -> Self {
+        ServerWorkspace {
+            id: workspace.id,
+            user_id: workspace.user_id,
+            name: workspace.name,
+            description: workspace.description,
+            icon: workspace.icon,
+            color: workspace.color,
+            is_default: workspace.is_default,
+            sort_order: workspace.sort_order,
+            is_deleted: workspace.is_deleted,
+            deleted_at: workspace.deleted_at,
+            created_at: workspace.created_at,
+            updated_at: workspace.updated_at,
+            server_ver: workspace.server_ver,
+            device_id: None,  // 客户端不需要发送
+            updated_by_device: None,  // 客户端不需要发送
+        }
+    }
+}
+
+impl From<ServerWorkspace> for Workspace {
+    fn from(workspace: ServerWorkspace) -> Self {
+        Workspace {
+            id: workspace.id,
+            user_id: workspace.user_id,
+            name: workspace.name,
+            description: workspace.description,
+            icon: workspace.icon,
+            color: workspace.color,
+            is_default: workspace.is_default,
+            is_current: false,  // ⚠️ 不同步 is_current，由客户端本地管理
+            sort_order: workspace.sort_order,
+            created_at: workspace.created_at,
+            updated_at: workspace.updated_at,
+            is_deleted: workspace.is_deleted,
+            deleted_at: workspace.deleted_at,
+            server_ver: workspace.server_ver,
             is_dirty: false,
             last_synced_at: Some(chrono::Utc::now().timestamp()),
         }
@@ -284,6 +367,8 @@ impl From<ServerNoteTagRelation> for NoteTagRelation {
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct SyncRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspaces: Option<Vec<ServerWorkspace>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<Vec<ServerNote>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub folders: Option<Vec<ServerFolder>>,
@@ -310,12 +395,15 @@ pub struct SyncResponse {
     pub server_time: i64,
     pub last_sync_at: i64,
 
+    pub upserted_workspaces: Vec<ServerWorkspace>,
     pub upserted_notes: Vec<ServerNote>,
     pub upserted_folders: Vec<ServerFolder>,
     pub upserted_tags: Vec<ServerTag>,
     pub upserted_snapshots: Vec<ServerNoteSnapshot>,
     pub upserted_note_tags: Vec<ServerNoteTagRelation>,
 
+    #[serde(default)]
+    pub deleted_workspace_ids: Vec<String>,
     #[serde(default)]
     pub deleted_note_ids: Vec<String>,
     #[serde(default)]
@@ -324,6 +412,7 @@ pub struct SyncResponse {
     pub deleted_tag_ids: Vec<String>,
 
     // 推送统计（服务器确认实际更新的数量）
+    pub pushed_workspaces: usize,
     pub pushed_notes: usize,
     pub pushed_folders: usize,
     pub pushed_tags: usize,
@@ -332,6 +421,7 @@ pub struct SyncResponse {
     pub pushed_total: usize,  // 推送总数
 
     // 拉取统计（服务器端真正的新数据）
+    pub pulled_workspaces: usize,
     pub pulled_notes: usize,
     pub pulled_folders: usize,
     pub pulled_tags: usize,
@@ -385,6 +475,7 @@ pub struct SyncReport {
     pub success: bool,  // 同步是否成功
 
     // 推送到服务器的详细统计
+    pub pushed_workspaces: usize,
     pub pushed_notes: usize,
     pub pushed_folders: usize,
     pub pushed_tags: usize,
@@ -392,6 +483,7 @@ pub struct SyncReport {
     pub pushed_note_tags: usize,
 
     // 从服务器拉取的详细统计
+    pub pulled_workspaces: usize,
     pub pulled_notes: usize,
     pub pulled_folders: usize,
     pub pulled_tags: usize,
@@ -399,6 +491,7 @@ pub struct SyncReport {
     pub pulled_note_tags: usize,
 
     // 删除的数据统计
+    pub deleted_workspaces: usize,
     pub deleted_notes: usize,
     pub deleted_folders: usize,
     pub deleted_tags: usize,
@@ -417,12 +510,12 @@ pub struct SyncReport {
 impl SyncReport {
     /// 获取总推送数量（兼容旧版本）
     pub fn total_pushed(&self) -> usize {
-        self.pushed_notes + self.pushed_folders + self.pushed_tags + self.pushed_snapshots + self.pushed_note_tags
+        self.pushed_workspaces + self.pushed_notes + self.pushed_folders + self.pushed_tags + self.pushed_snapshots + self.pushed_note_tags
     }
 
     /// 获取总拉取数量（兼容旧版本）
     pub fn total_pulled(&self) -> usize {
-        self.pulled_notes + self.pulled_folders + self.pulled_tags + self.pulled_snapshots + self.pulled_note_tags
+        self.pulled_workspaces + self.pulled_notes + self.pulled_folders + self.pulled_tags + self.pulled_snapshots + self.pulled_note_tags
     }
 }
 

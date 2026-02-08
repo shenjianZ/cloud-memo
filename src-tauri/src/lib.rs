@@ -7,9 +7,9 @@ mod services;
 use database::init_db_pool;
 use database::repositories::{
     EditorSettingsRepository, FolderRepository, KeybindingRepository, NoteRepository,
-    TagRepository, UserProfileRepository,
+    TagRepository, UserProfileRepository, WorkspaceRepository,
 };
-use services::{AppSettingsService, AuthService, AutoSyncService, CleanupService, SnapshotService, SyncService, SingleSyncService, UserProfileService};
+use services::{AppSettingsService, AuthService, AutoSyncService, CleanupService, SnapshotService, SyncService, SingleSyncService, UserProfileService, WorkspaceService};
 use services::{EditorSettingsService, FolderService, KeybindingService, NoteService, TagService};
 use tauri::Manager;
 
@@ -111,6 +111,10 @@ pub fn run() {
             let user_profile_repo = UserProfileRepository::new(pool.clone());
             let user_profile_service = UserProfileService::new(user_profile_repo, pool.clone());
 
+            // 工作空间服务
+            let workspace_repo = WorkspaceRepository::new(pool.clone());
+            let workspace_service = WorkspaceService::new(workspace_repo);
+
             // 注册服务到 Tauri 状态
             app.manage(note_service);
             app.manage(folder_service);
@@ -125,6 +129,7 @@ pub fn run() {
             app.manage(auth_service.clone()); // 克隆以便后续使用
             app.manage(snapshot_service);
             app.manage(user_profile_service);
+            app.manage(workspace_service);
             // ===== 自动清理服务 =====
             app.manage(cleanup_service.clone()); // 克隆以便后续使用
 
@@ -229,6 +234,14 @@ pub fn run() {
             commands::set_note_tags,
             commands::permanently_delete_tag,
             commands::permanently_delete_tags,
+            // ===== 工作空间命令 =====
+            commands::list_workspaces,
+            commands::create_workspace,
+            commands::update_workspace,
+            commands::delete_workspace,
+            commands::set_default_workspace,
+            commands::get_current_workspace,
+            commands::switch_workspace,
             // ===== 云端同步命令 =====
             commands::sync_now,
             commands::get_sync_status,

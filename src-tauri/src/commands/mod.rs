@@ -9,6 +9,7 @@ pub mod auth;
 pub mod snapshot;
 pub mod profile;
 pub mod app_settings;
+pub mod workspaces;
 
 pub use keybindings::*;
 pub use notes::*;
@@ -21,6 +22,7 @@ pub use auth::*;
 pub use snapshot::*;
 pub use profile::*;
 pub use app_settings::*;
+pub use workspaces::*;
 
 // 兼容性命令（已废弃，保留兼容性）
 #[tauri::command]

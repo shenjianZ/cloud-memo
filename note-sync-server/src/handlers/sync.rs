@@ -1,10 +1,11 @@
 use axum::{extract::State, Extension, Json, http::HeaderMap};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sqlx::MySqlPool;
 
 use super::ErrorResponse;
 use crate::middleware::logging::{log_info, RequestId};
-use crate::models::{Folder, Note, Tag, NoteVersion, NoteTagRelation, ConflictResolutionStrategy};
+use crate::models::{Folder, Note, Tag, NoteVersion, NoteTagRelation, Workspace, ConflictResolutionStrategy};
 use crate::services::sync_history_service::SyncHistoryService;
 use crate::services::sync_lock_service::SyncLockService;
 use crate::AppState;
@@ -14,6 +15,12 @@ use crate::AppState;
 pub struct SyncRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_sync_at: Option<i64>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspaces: Option<Vec<Workspace>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<Vec<Note>>,
@@ -47,6 +54,7 @@ pub struct SyncResponse {
     pub last_sync_at: i64,
 
     // 云端新增/更新的数据
+    pub upserted_workspaces: Vec<Workspace>,
     pub upserted_notes: Vec<Note>,
     pub upserted_folders: Vec<Folder>,
     pub upserted_tags: Vec<Tag>,
@@ -57,8 +65,11 @@ pub struct SyncResponse {
     pub deleted_note_ids: Vec<String>,
     pub deleted_folder_ids: Vec<String>,
     pub deleted_tag_ids: Vec<String>,
+    #[serde(default)]
+    pub deleted_workspace_ids: Vec<String>,
 
     // 推送统计（服务器确认实际更新的数量）
+    pub pushed_workspaces: usize,
     pub pushed_notes: usize,
     pub pushed_folders: usize,
     pub pushed_tags: usize,
@@ -67,6 +78,7 @@ pub struct SyncResponse {
     pub pushed_total: usize,  // 推送总数
 
     // 拉取统计（服务器端真正的新数据，不包括客户端刚推送的数据）
+    pub pulled_workspaces: usize,
     pub pulled_notes: usize,
     pub pulled_folders: usize,
     pub pulled_tags: usize,
@@ -88,6 +100,26 @@ pub struct ConflictInfo {
     pub title: String,
 }
 
+/// 验证工作空间是否属于当前用户
+///
+/// 在同步前验证，防止恶意客户端访问其他用户的工作空间
+async fn verify_workspace_ownership(
+    pool: &MySqlPool,
+    user_id: &str,
+    workspace_id: &str,
+) -> Result<bool, String> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM workspaces WHERE id = ? AND user_id = ? AND is_deleted = FALSE"
+    )
+    .bind(workspace_id)
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("验证工作空间归属失败: {}", e))?;
+
+    Ok(count > 0)
+}
+
 /// 统一同步接口：合并 push 和 pull
 pub async fn sync(
     Extension(request_id): Extension<RequestId>,
@@ -102,20 +134,68 @@ pub async fn sync(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
+    // 获取 workspace_id，如果未指定则使用用户的默认空间
+    let workspace_id = if let Some(ref ws_id) = req.workspace_id {
+        // 验证工作空间是否属于当前用户（安全检查）
+        match verify_workspace_ownership(&state.pool, &user_id, ws_id).await {
+            Ok(true) => {
+                log_info(&request_id, "工作空间验证成功", &format!("workspace_id={}", ws_id));
+                Some(ws_id.clone())
+            },
+            Ok(false) => {
+                log_info(&request_id, "工作空间验证失败", &format!("workspace_id={} 不属于用户 user_id={}", ws_id, user_id));
+                return Err(ErrorResponse::new_with_code(
+                    format!("工作空间 {} 不属于当前用户", ws_id),
+                    403,
+                    "WORKSPACE_NOT_OWNED",
+                ));
+            },
+            Err(e) => {
+                log_info(&request_id, "工作空间验证错误", &e);
+                return Err(ErrorResponse::new_with_code(
+                    "验证工作空间归属失败".to_string(),
+                    500,
+                    "WORKSPACE_VERIFICATION_ERROR",
+                ));
+            }
+        }
+    } else {
+        // 查询用户的默认空间
+        let default_ws_id: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM workspaces WHERE user_id = ? AND is_default = TRUE AND is_deleted = FALSE LIMIT 1"
+        )
+        .bind(&user_id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(|e| {
+            log_info(&request_id, "查询默认工作空间失败", &e.to_string());
+            ErrorResponse::new("查询默认工作空间失败")
+        })?;
+        default_ws_id
+    };
+
+    log_info(&request_id, "工作空间ID", &format!("workspace_id={:?}", workspace_id));
+
     // 处理可选字段，None 转为空数组
+    let workspaces = req.workspaces.unwrap_or_default();
     let notes = req.notes.unwrap_or_default();
     let folders = req.folders.unwrap_or_default();
     let tags = req.tags.unwrap_or_default();
     let snapshots = req.snapshots.unwrap_or_default();
     let note_tags = req.note_tags.unwrap_or_default();
 
+    let workspaces_count = workspaces.len();
     let notes_count = notes.len();
     let folders_count = folders.len();
     let tags_count = tags.len();
     let snapshots_count = snapshots.len();
     let note_tags_count = note_tags.len();
 
+    // 收集客户端推送的 workspace ID（用于后续计算真实的 pulled 统计）
+    let pushed_workspace_ids: std::collections::HashSet<String> = workspaces.iter().map(|w| w.id.clone()).collect();
+
     // 推送统计计数器（服务器确认实际更新的数量）
+    let mut pushed_workspaces = 0usize;
     let mut pushed_notes = 0usize;
     let mut pushed_folders = 0usize;
     let mut pushed_tags = 0usize;
@@ -127,11 +207,12 @@ pub async fn sync(
         &request_id,
         "同步请求参数",
         &format!(
-            "user_id={}, device_id={:?}, conflict_resolution={:?}, last_sync_at={:?}, notes={}, folders={}, tags={}, snapshots={}, note_tags={}",
+            "user_id={}, device_id={:?}, conflict_resolution={:?}, last_sync_at={:?}, workspaces={}, notes={}, folders={}, tags={}, snapshots={}, note_tags={}",
             user_id,
             req.device_id,
             req.conflict_resolution,
             req.last_sync_at,
+            workspaces_count,
             notes_count,
             folders_count,
             tags_count,
@@ -139,6 +220,19 @@ pub async fn sync(
             note_tags_count
         ),
     );
+
+    // 打印工作空间详情（前 3 个）
+    if !workspaces.is_empty() {
+        let preview_workspaces: Vec<_> = workspaces.iter()
+            .take(3)
+            .map(|w| format!("id={}, name={}, ver={}", w.id, w.name, w.server_ver))
+            .collect();
+        log_info(
+            &request_id,
+            "同步工作空间预览",
+            &format!("total={}, preview=[{}]", workspaces_count, preview_workspaces.join(", ")),
+        );
+    }
 
     // 打印笔记详情（前 3 个）
     if !notes.is_empty() {
@@ -209,16 +303,25 @@ pub async fn sync(
     let history_service = SyncHistoryService::new(state.pool.clone());
     let lock_service = SyncLockService::new(state.pool.clone());
 
-    // 获取操作锁（使用 RAII Guard 自动释放）
+    // 获取操作锁（使用 RAII Guard 自动释放，包含工作空间）
     // 锁持续时间：30秒（作为兜底，实际会在 sync 完成后立即释放）
     let device_id = req.device_id.as_deref().unwrap_or("unknown");
-    let _lock_guard = lock_service.acquire_guard(&user_id, device_id, 30).await
+    let _lock_guard = lock_service.acquire_guard(
+        &user_id,
+        device_id,
+        workspace_id.as_deref(),  // 传入 workspace_id
+        30,
+    ).await
         .map_err(|e| {
             log_info(&request_id, "获取同步锁失败", &e.to_string());
-            ErrorResponse::new(format!("获取同步锁失败: {}", e))
+            ErrorResponse::new_with_code(
+                format!("该用户的其他工作空间正在同步，请稍后重试"),
+                409,  // Conflict
+                "SYNC_IN_PROGRESS",
+            )
         })?;
 
-    log_info(&request_id, "获取同步锁成功", &format!("device_id={}", device_id));
+    log_info(&request_id, "获取同步锁成功", &format!("device_id={}, workspace_id={:?}", device_id, workspace_id));
 
     // 开始事务
     let mut tx = state.pool.begin().await.map_err(|e| {
@@ -230,6 +333,115 @@ pub async fn sync(
 
     // ===== 1. 保存客户端更改（带版本冲突检测） =====
 
+    // 优先处理 workspaces（其他数据依赖 workspace_id）
+    log_info(&request_id, "开始处理工作空间同步", &format!("workspaces_count={}", workspaces_count));
+
+    for workspace in workspaces {
+        // 使用 FOR UPDATE 锁定行，防止并发修改
+        log_info(&request_id, "查询工作空间", &format!("id={}, local_ver={}", workspace.id, workspace.server_ver));
+        let existing: Option<Workspace> =
+            sqlx::query_as::<_, Workspace>("SELECT * FROM workspaces WHERE id = ? AND user_id = ? FOR UPDATE")
+                .bind(&workspace.id)
+                .bind(&user_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(|e| {
+                    log_info(&request_id, "查询工作空间失败", &e.to_string());
+                    ErrorResponse::new("查询工作空间失败")
+                })?;
+
+        if let Some(existing_ws) = existing {
+            log_info(&request_id, "工作空间已存在", &format!("id={}, server_ver={}", workspace.id, existing_ws.server_ver));
+            // 冲突检测：如果服务器版本比本地版本新，记录冲突并跳过
+            if existing_ws.server_ver > workspace.server_ver {
+                log_info(&request_id, "检测到冲突", &format!("id={}, local_ver={}, server_ver={}", workspace.id, workspace.server_ver, existing_ws.server_ver));
+                conflicts.push(ConflictInfo {
+                    id: workspace.id.clone(),
+                    entity_type: "workspace".to_string(),
+                    local_version: workspace.server_ver,
+                    server_version: existing_ws.server_ver,
+                    title: workspace.name.clone(),
+                });
+                continue;
+            } else {
+                log_info(&request_id, "无冲突，正常更新", &format!("id={}, server_ver={} -> {}", workspace.id, existing_ws.server_ver, existing_ws.server_ver + 1));
+            }
+        } else {
+            log_info(&request_id, "工作空间不存在，新建", &format!("id={}, name={}", workspace.id, workspace.name));
+        }
+
+        // 插入或更新工作空间
+        let new_server_ver = workspace.server_ver + 1;
+
+        // 构建设备描述
+        let updated_by_device = format!(
+            "{} ({})",
+            req.device_id.as_deref().unwrap_or("unknown"),
+            user_agent.as_deref().unwrap_or("Unknown Device")
+        );
+
+        sqlx::query(
+            "INSERT INTO workspaces
+             (id, user_id, name, description, icon, color, is_default, sort_order,
+              is_deleted, deleted_at, created_at, updated_at, server_ver, device_id, updated_by_device)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                name = VALUES(name),
+                description = VALUES(description),
+                icon = VALUES(icon),
+                color = VALUES(color),
+                is_default = VALUES(is_default),
+                sort_order = VALUES(sort_order),
+                is_deleted = VALUES(is_deleted),
+                deleted_at = VALUES(deleted_at),
+                updated_at = UNIX_TIMESTAMP(),
+                server_ver = server_ver + 1,
+                device_id = VALUES(device_id),
+                updated_by_device = VALUES(updated_by_device)"
+        )
+        .bind(&workspace.id)
+        .bind(&user_id)
+        .bind(&workspace.name)
+        .bind(&workspace.description)
+        .bind(&workspace.icon)
+        .bind(&workspace.color)
+        .bind(workspace.is_default)
+        .bind(workspace.sort_order)
+        .bind(workspace.is_deleted)
+        .bind(workspace.deleted_at)
+        .bind(workspace.created_at)
+        .bind(workspace.updated_at)
+        .bind(new_server_ver)
+        .bind(&req.device_id)
+        .bind(&updated_by_device)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            log_info(&request_id, "更新工作空间失败", &e.to_string());
+            ErrorResponse::new("更新工作空间失败")
+        })?;
+
+        // 推送成功，递增计数器
+        pushed_workspaces += 1;
+
+        // 验证：只查询 server_ver 字段
+        let verify_server_ver: Option<i32> = sqlx::query_scalar(
+            "SELECT server_ver FROM workspaces WHERE id = ? AND user_id = ?"
+        )
+        .bind(&workspace.id)
+        .bind(&user_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| {
+            log_info(&request_id, "验证工作空间失败", &e.to_string());
+            ErrorResponse::new("验证工作空间失败")
+        })?;
+
+        if let Some(ver) = verify_server_ver {
+            log_info(&request_id, "验证工作空间更新", &format!("id={}, 数据库中 server_ver={}", workspace.id, ver));
+        }
+    }
+
     // 更新 notes
     log_info(&request_id, "开始处理笔记同步", &format!("notes_count={}", notes_count));
 
@@ -240,9 +452,10 @@ pub async fn sync(
         // 使用 FOR UPDATE 锁定行，防止并发修改
         log_info(&request_id, "查询笔记", &format!("id={}, local_ver={}", note.id, note.server_ver));
         let existing: Option<Note> =
-            sqlx::query_as::<_, Note>("SELECT * FROM notes WHERE id = ? AND user_id = ? FOR UPDATE")
+            sqlx::query_as::<_, Note>("SELECT * FROM notes WHERE id = ? AND user_id = ? AND (workspace_id = ? OR workspace_id IS NULL) FOR UPDATE")
                 .bind(&note.id)
                 .bind(&user_id)
+                .bind(&workspace_id)
                 .fetch_optional(&mut *tx)
                 .await
                 .map_err(|e| {
@@ -285,15 +498,16 @@ pub async fn sync(
                         );
 
                         sqlx::query(
-                            "INSERT INTO notes (id, user_id, title, content, folder_id,
+                            "INSERT INTO notes (id, user_id, workspace_id, title, content, folder_id,
                               is_deleted, deleted_at, created_at, updated_at, server_ver,
                               excerpt, markdown_cache, is_favorite, is_pinned, author,
                               word_count, read_time_minutes,
                               device_id, updated_by_device)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                         )
                         .bind(&conflict_copy_id)
                         .bind(&user_id)
+                        .bind(&workspace_id)
                         .bind(&format!("{} (冲突副本-本地)", note.title))
                         .bind(&note.content)
                         .bind(&note.folder_id)
@@ -359,12 +573,12 @@ pub async fn sync(
         );
 
         sqlx::query(
-            "INSERT INTO notes (id, user_id, title, content, folder_id,
+            "INSERT INTO notes (id, user_id, workspace_id, title, content, folder_id,
                               is_deleted, deleted_at, created_at, updated_at, server_ver,
                               excerpt, markdown_cache, is_favorite, is_pinned, author,
                               word_count, read_time_minutes,
                               device_id, updated_by_device)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE
                 title = VALUES(title),
                 content = VALUES(content),
@@ -385,6 +599,7 @@ pub async fn sync(
         )
         .bind(&note.id)
         .bind(&user_id)
+        .bind(&workspace_id)
         .bind(&note.title)
         .bind(&note.content)
         .bind(&note.folder_id)
@@ -457,10 +672,11 @@ pub async fn sync(
                 } else {
                     // 检查父文件夹是否已存在于数据库中
                     let parent_exists: bool = sqlx::query_scalar(
-                        "SELECT COUNT(*) > 0 FROM folders WHERE id = ? AND user_id = ?"
+                        "SELECT COUNT(*) > 0 FROM folders WHERE id = ? AND user_id = ? AND (workspace_id = ? OR workspace_id IS NULL)"
                     )
                     .bind(parent_id)
                     .bind(&user_id)
+                    .bind(&workspace_id)
                     .fetch_one(&mut *tx)
                     .await
                     .map_err(|e| {
@@ -476,9 +692,10 @@ pub async fn sync(
             if can_insert {
                 // 插入文件夹（复用现有逻辑）
                 let existing: Option<Folder> =
-                    sqlx::query_as::<_, Folder>("SELECT * FROM folders WHERE id = ? AND user_id = ? FOR UPDATE")
+                    sqlx::query_as::<_, Folder>("SELECT * FROM folders WHERE id = ? AND user_id = ? AND (workspace_id = ? OR workspace_id IS NULL) FOR UPDATE")
                         .bind(&folder.id)
                         .bind(&user_id)
+                        .bind(&workspace_id)
                         .fetch_optional(&mut *tx)
                         .await
                         .map_err(|e| {
@@ -513,10 +730,10 @@ pub async fn sync(
                 );
 
                 sqlx::query(
-                    "INSERT INTO folders (id, user_id, name, parent_id,
+                    "INSERT INTO folders (id, user_id, workspace_id, name, parent_id,
                                         created_at, updated_at, server_ver,
                                         device_id, updated_by_device)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                      ON DUPLICATE KEY UPDATE
                         name = VALUES(name),
                         parent_id = VALUES(parent_id),
@@ -527,6 +744,7 @@ pub async fn sync(
                 )
                 .bind(&folder.id)
                 .bind(&user_id)
+                .bind(&workspace_id)
                 .bind(&folder.name)
                 .bind(&folder.parent_id)
                 .bind(folder.created_at)
@@ -586,9 +804,10 @@ pub async fn sync(
 
     for tag in tags {
         let existing: Option<Tag> =
-            sqlx::query_as::<_, Tag>("SELECT * FROM tags WHERE id = ? AND user_id = ? FOR UPDATE")
+            sqlx::query_as::<_, Tag>("SELECT * FROM tags WHERE id = ? AND user_id = ? AND (workspace_id = ? OR workspace_id IS NULL) FOR UPDATE")
                 .bind(&tag.id)
                 .bind(&user_id)
+                .bind(&workspace_id)
                 .fetch_optional(&mut *tx)
                 .await
                 .map_err(|e| {
@@ -620,9 +839,9 @@ pub async fn sync(
         );
 
         sqlx::query(
-            "INSERT INTO tags (id, user_id, name, color,
+            "INSERT INTO tags (id, user_id, workspace_id, name, color,
                               created_at, updated_at, server_ver, device_id, updated_by_device)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE
                 name = VALUES(name),
                 color = VALUES(color),
@@ -633,6 +852,7 @@ pub async fn sync(
         )
         .bind(&tag.id)
         .bind(&user_id)
+        .bind(&workspace_id)
         .bind(&tag.name)
         .bind(&tag.color)
         .bind(tag.created_at)
@@ -673,11 +893,12 @@ pub async fn sync(
         for snapshot in note_snapshots {
             sqlx::query(
                 "DELETE FROM note_versions
-                 WHERE note_id = ? AND user_id = ?
+                 WHERE note_id = ? AND user_id = ? AND (workspace_id = ? OR workspace_id IS NULL)
                  AND id = ?"
             )
             .bind(note_id)
             .bind(&user_id)
+            .bind(&workspace_id)
             .bind(&snapshot.id)
             .execute(&mut *tx)
             .await
@@ -689,10 +910,11 @@ pub async fn sync(
 
         // 2. 查询当前快照数量
         let current_snapshot_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM note_versions WHERE note_id = ? AND user_id = ?"
+            "SELECT COUNT(*) FROM note_versions WHERE note_id = ? AND user_id = ? AND (workspace_id = ? OR workspace_id IS NULL)"
         )
         .bind(note_id)
         .bind(&user_id)
+        .bind(&workspace_id)
         .fetch_one(&mut *tx)
         .await
         .map_err(|e| {
@@ -715,12 +937,13 @@ pub async fn sync(
             // 删除创建时间最久的 to_delete 个快照
             sqlx::query(
                 "DELETE FROM note_versions
-                 WHERE note_id = ? AND user_id = ?
+                 WHERE note_id = ? AND user_id = ? AND (workspace_id = ? OR workspace_id IS NULL)
                  ORDER BY created_at ASC
                  LIMIT ?"
             )
             .bind(note_id)
             .bind(&user_id)
+            .bind(&workspace_id)
             .bind(to_delete)
             .execute(&mut *tx)
             .await
@@ -738,10 +961,11 @@ pub async fn sync(
     for snapshot in snapshots {
         let existing: Option<NoteVersion> =
             sqlx::query_as::<_, NoteVersion>(
-                "SELECT * FROM note_versions WHERE id = ? AND user_id = ? FOR UPDATE"
+                "SELECT * FROM note_versions WHERE id = ? AND user_id = ? AND (workspace_id = ? OR workspace_id IS NULL) FOR UPDATE"
             )
             .bind(&snapshot.id)
             .bind(&user_id)
+            .bind(&workspace_id)
             .fetch_optional(&mut *tx)
             .await
             .map_err(|e| {
@@ -768,9 +992,9 @@ pub async fn sync(
 
         sqlx::query(
             "INSERT INTO note_versions
-             (id, note_id, user_id, title, content, snapshot_name, created_at,
+             (id, note_id, user_id, workspace_id, title, content, snapshot_name, created_at,
               device_id, server_ver)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON DUPLICATE KEY UPDATE
                 title = VALUES(title),
                 content = VALUES(content),
@@ -781,6 +1005,7 @@ pub async fn sync(
         .bind(&snapshot.id)
         .bind(&snapshot.note_id)
         .bind(&user_id)
+        .bind(&workspace_id)
         .bind(&snapshot.title)
         .bind(&snapshot.content)
         .bind(&snapshot.snapshot_name)
@@ -807,12 +1032,13 @@ pub async fn sync(
 
     for relation in note_tags {
         sqlx::query(
-            "INSERT IGNORE INTO note_tags (note_id, tag_id, user_id, created_at)
-             VALUES (?, ?, ?, ?)"
+            "INSERT IGNORE INTO note_tags (note_id, tag_id, user_id, workspace_id, created_at)
+             VALUES (?, ?, ?, ?, ?)"
         )
         .bind(&relation.note_id)
         .bind(&relation.tag_id)
         .bind(&user_id)
+        .bind(&workspace_id)
         .bind(relation.created_at)
         .execute(&mut *tx)
         .await
@@ -829,12 +1055,28 @@ pub async fn sync(
     let last_sync = req.last_sync_at.unwrap_or(0);
     log_info(&request_id, "开始查询云端更新", &format!("last_sync_at={}", last_sync));
 
-    // 查询笔记（不要加 is_deleted = false!）
-    let all_notes: Vec<Note> = sqlx::query_as::<_, Note>(
-        "SELECT * FROM notes
+    // 查询工作空间（不要加 is_deleted = false!）
+    let all_workspaces: Vec<Workspace> = sqlx::query_as::<_, Workspace>(
+        "SELECT * FROM workspaces
          WHERE user_id = ? AND updated_at > ?"
     )
     .bind(&user_id)
+    .bind(last_sync)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(|e| {
+        log_info(&request_id, "查询工作空间失败", &e.to_string());
+        ErrorResponse::new("查询工作空间失败")
+    })?;
+    log_info(&request_id, "查询云端工作空间", &format!("found={}", all_workspaces.len()));
+
+    // 查询笔记（不要加 is_deleted = false!）
+    let all_notes: Vec<Note> = sqlx::query_as::<_, Note>(
+        "SELECT * FROM notes
+         WHERE user_id = ? AND (workspace_id = ? OR workspace_id IS NULL) AND updated_at > ?"
+    )
+    .bind(&user_id)
+    .bind(&workspace_id)
     .bind(last_sync)
     .fetch_all(&mut *tx)
     .await
@@ -847,9 +1089,10 @@ pub async fn sync(
     // 查询文件夹
     let all_folders: Vec<Folder> = sqlx::query_as::<_, Folder>(
         "SELECT * FROM folders
-         WHERE user_id = ? AND updated_at > ?"
+         WHERE user_id = ? AND (workspace_id = ? OR workspace_id IS NULL) AND updated_at > ?"
     )
     .bind(&user_id)
+    .bind(&workspace_id)
     .bind(last_sync)
     .fetch_all(&mut *tx)
     .await
@@ -862,9 +1105,10 @@ pub async fn sync(
     // 查询标签
     let all_tags: Vec<Tag> = sqlx::query_as::<_, Tag>(
         "SELECT * FROM tags
-         WHERE user_id = ? AND updated_at > ?"
+         WHERE user_id = ? AND (workspace_id = ? OR workspace_id IS NULL) AND updated_at > ?"
     )
     .bind(&user_id)
+    .bind(&workspace_id)
     .bind(last_sync)
     .fetch_all(&mut *tx)
     .await
@@ -877,9 +1121,10 @@ pub async fn sync(
     // 查询快照（使用 created_at，因为快照创建后不会修改）
     let all_snapshots: Vec<NoteVersion> = sqlx::query_as::<_, NoteVersion>(
         "SELECT * FROM note_versions
-         WHERE user_id = ? AND created_at > ?"
+         WHERE user_id = ? AND (workspace_id = ? OR workspace_id IS NULL) AND created_at > ?"
     )
     .bind(&user_id)
+    .bind(&workspace_id)
     .bind(last_sync)
     .fetch_all(&mut *tx)
     .await
@@ -893,9 +1138,10 @@ pub async fn sync(
     let all_note_tags: Vec<NoteTagRelation> = sqlx::query_as::<_, NoteTagRelation>(
         "SELECT nt.* FROM note_tags nt
          INNER JOIN tags t ON nt.tag_id = t.id
-         WHERE t.user_id = ? AND t.updated_at > ?"
+         WHERE t.user_id = ? AND (t.workspace_id = ? OR t.workspace_id IS NULL) AND t.updated_at > ?"
     )
     .bind(&user_id)
+    .bind(&workspace_id)
     .bind(last_sync)
     .fetch_all(&mut *tx)
     .await
@@ -906,6 +1152,18 @@ pub async fn sync(
     log_info(&request_id, "查询云端笔记标签关联", &format!("found={}", all_note_tags.len()));
 
     // ===== 3. 分类数据（upserted vs deleted） =====
+    // 工作空间：支持软删除，分类 upserted 和 deleted
+    let mut upserted_workspaces = Vec::new();
+    let mut deleted_workspace_ids = Vec::new();
+    for workspace in all_workspaces {
+        if workspace.is_deleted {
+            deleted_workspace_ids.push(workspace.id);
+        } else {
+            upserted_workspaces.push(workspace);
+        }
+    }
+    log_info(&request_id, "分类云端工作空间", &format!("upserted={}, deleted={}", upserted_workspaces.len(), deleted_workspace_ids.len()));
+
     let mut upserted_notes = Vec::new();
     let mut deleted_note_ids = Vec::new();
     for note in all_notes {
@@ -995,18 +1253,21 @@ pub async fn sync(
     );
 
     // ===== 5. 计算真实的 pulled 统计（排除客户端刚推送的数据） =====
-    // pushed_note_ids, pushed_tag_ids, pushed_snapshot_ids 已在前面收集
+    // pushed_workspace_ids, pushed_note_ids, pushed_tag_ids, pushed_snapshot_ids 已在前面收集
     let pushed_folder_ids: std::collections::HashSet<String> = folders.iter().map(|f| f.id.clone()).collect();
 
     // 计算真实的 pulled 数量（排除客户端刚推送的数据）
+    let pulled_workspaces = upserted_workspaces.iter()
+        .filter(|w| !pushed_workspace_ids.contains(&w.id))
+        .count();
     let pulled_notes = upserted_notes.iter().filter(|n| !pushed_note_ids.contains(&n.id)).count();
     let pulled_folders = upserted_folders.iter().filter(|f| !pushed_folder_ids.contains(&f.id)).count();
     let pulled_tags = upserted_tags.iter().filter(|t| !pushed_tag_ids.contains(&t.id)).count();
     let pulled_snapshots = upserted_snapshots.iter().filter(|s| !pushed_snapshot_ids.contains(&s.id)).count();
     let pulled_note_tags = upserted_note_tags.iter().filter(|nt| !pushed_note_tag_keys.contains(&(nt.note_id.clone(), nt.tag_id.clone()))).count();
 
-    let pushed_total = pushed_notes + pushed_folders + pushed_tags + pushed_snapshots + pushed_note_tags;
-    let pulled_total = pulled_notes + pulled_folders + pulled_tags + pulled_snapshots + pulled_note_tags;
+    let pushed_total = pushed_workspaces + pushed_notes + pushed_folders + pushed_tags + pushed_snapshots + pushed_note_tags;
+    let pulled_total = pulled_workspaces + pulled_notes + pulled_folders + pulled_tags + pulled_snapshots + pulled_note_tags;
 
     // ===== 6. 返回响应 =====
     Ok(Json(SyncResponse {
@@ -1017,6 +1278,7 @@ pub async fn sync(
         },
         server_time: Utc::now().timestamp(),
         last_sync_at: Utc::now().timestamp(),
+        upserted_workspaces,
         upserted_notes,
         upserted_folders,
         upserted_tags,
@@ -1025,14 +1287,17 @@ pub async fn sync(
         deleted_note_ids,
         deleted_folder_ids,
         deleted_tag_ids,
-        // ✅ 推送统计（服务器确认实际更新的数量）
+        deleted_workspace_ids,
+        // 推送统计（服务器确认实际更新的数量）
+        pushed_workspaces,
         pushed_notes,
         pushed_folders,
         pushed_tags,
         pushed_snapshots,
         pushed_note_tags,
         pushed_total,
-        // ✅ 拉取统计（服务器端真正的新数据）
+        // 拉取统计（服务器端真正的新数据）
+        pulled_workspaces,
         pulled_notes,
         pulled_folders,
         pulled_tags,

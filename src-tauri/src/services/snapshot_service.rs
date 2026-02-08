@@ -26,6 +26,32 @@ impl SnapshotService {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().timestamp();
 
+        // 获取当前 workspace_id（通过当前用户的 is_current 标记）
+        let workspace_id: Option<String> = {
+            // 获取当前用户 ID
+            let user_id: Option<String> = conn
+                .query_row(
+                    "SELECT user_id FROM user_auth WHERE is_current = 1 LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .ok();
+
+            match user_id {
+                Some(uid) => {
+                    // 查询该用户的当前工作空间（is_current = 1）
+                    conn
+                        .query_row(
+                            "SELECT id FROM workspaces WHERE user_id = ? AND is_current = 1 AND is_deleted = 0 LIMIT 1",
+                            [&uid],
+                            |row| row.get(0),
+                        )
+                        .ok()
+                }
+                None => None,  // 未登录
+            }
+        };
+
         let snapshot = NoteSnapshot {
             id: id.clone(),
             note_id: req.note_id,
@@ -33,15 +59,16 @@ impl SnapshotService {
             content: req.content,
             snapshot_name: req.snapshot_name,
             created_at: now,
+            workspace_id,
             server_ver: 1,
             is_dirty: true,
             last_synced_at: None,
         };
 
         conn.execute(
-            "INSERT INTO note_snapshots (id, note_id, title, content, snapshot_name, created_at, server_ver, is_dirty, last_synced_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            (&snapshot.id, &snapshot.note_id, &snapshot.title, &snapshot.content, &snapshot.snapshot_name, snapshot.created_at, snapshot.server_ver, snapshot.is_dirty, snapshot.last_synced_at),
+            "INSERT INTO note_snapshots (id, note_id, title, content, snapshot_name, created_at, workspace_id, server_ver, is_dirty, last_synced_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            (&snapshot.id, &snapshot.note_id, &snapshot.title, &snapshot.content, &snapshot.snapshot_name, snapshot.created_at, &snapshot.workspace_id, snapshot.server_ver, snapshot.is_dirty, snapshot.last_synced_at),
         ).map_err(|e| AppError::DatabaseError(format!("创建快照失败: {}", e)))?;
 
         log::info!("已为笔记 {} 创建快照 {}", id, snapshot.note_id);
@@ -83,7 +110,7 @@ impl SnapshotService {
             .map_err(|e| AppError::DatabaseError(format!("获取数据库连接失败: {}", e)))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, note_id, title, content, snapshot_name, created_at, server_ver, is_dirty, last_synced_at
+            "SELECT id, note_id, title, content, snapshot_name, created_at, workspace_id, server_ver, is_dirty, last_synced_at
              FROM note_snapshots
              WHERE id = ?1"
         ).map_err(|e| AppError::DatabaseError(format!("获取快照失败: {}", e)))?;
@@ -96,9 +123,10 @@ impl SnapshotService {
                 content: row.get(3)?,
                 snapshot_name: row.get(4)?,
                 created_at: row.get(5)?,
-                server_ver: row.get(6)?,
-                is_dirty: row.get(7)?,
-                last_synced_at: row.get(8)?,
+                workspace_id: row.get(6)?,
+                server_ver: row.get(7)?,
+                is_dirty: row.get(8)?,
+                last_synced_at: row.get(9)?,
             })
         }).map_err(|e| AppError::NotFound(format!("快照未找到: {}", e)))?;
 

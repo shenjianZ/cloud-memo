@@ -157,6 +157,7 @@ interface NoteStore {
     // 数据管理
     exportAllNotes: () => Promise<void>;
     clearAllNotes: () => Promise<void>;
+    clearNotesState: () => void;  // 新增：只清空前端状态，不删除数据库记录
 }
 
 export const useNoteStore = create<NoteStore>()(
@@ -681,6 +682,11 @@ export const useNoteStore = create<NoteStore>()(
                     });
                     throw error;
                 }
+            },
+
+            // 新增：只清空前端状态，不删除数据库记录（用于切换账号）
+            clearNotesState: () => {
+                set({ notes: [], activeNoteId: null, folders: [] });
             },
         }),
         {

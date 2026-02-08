@@ -144,6 +144,21 @@ async fn main() -> anyhow::Result<()> {
         // 文件夹端点
         .route("/folders", get(handlers::folders::list_folders))
         .route("/folders", post(handlers::folders::create_folder))
+        // 工作空间端点
+        .route("/workspaces", get(handlers::workspaces::list_workspaces))
+        .route("/workspaces", post(handlers::workspaces::create_workspace))
+        .route(
+            "/workspaces/:id",
+            axum::routing::patch(handlers::workspaces::update_workspace),
+        )
+        .route(
+            "/workspaces/:id",
+            axum::routing::delete(handlers::workspaces::delete_workspace),
+        )
+        .route(
+            "/workspaces/:id/default",
+            post(handlers::workspaces::set_default_workspace),
+        )
         // 设备管理端点
         .route("/devices", get(handlers::devices::list_devices))
         .route(

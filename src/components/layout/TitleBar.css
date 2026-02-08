@@ -19,11 +19,12 @@
 
 /* 拖拽区域 - 左侧 */
 .titlebar-drag-area {
-  flex: 1;
+  flex: 0 0 auto;
   height: 100%;
   display: flex;
   align-items: center;
   padding-left: 12px;
+  padding-right: 16px;
   gap: 8px;
   -webkit-app-region: drag;
 }
@@ -42,14 +43,22 @@
   text-overflow: ellipsis;
 }
 
-/* 用户区域 - 中间/右侧 */
+/* 中间拖拽区域 - 占据剩余空间 */
+.titlebar-drag-spacer {
+  flex: 1;
+  height: 100%;
+  -webkit-app-region: drag;
+  cursor: default;
+}
+
+/* 用户区域 - 右侧 */
 .titlebar-user-area {
-  position: absolute;
-  right: 138px; /* 紧挨着窗口控制按钮（3个按钮 * 46px = 138px） */
-  top: 0;
+  flex: 0 0 auto;
   height: 100%;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  padding-right: 16px;
   -webkit-app-region: no-drag;
 }
 

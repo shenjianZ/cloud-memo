@@ -18,11 +18,14 @@ impl FolderService {
 
     /// 创建文件夹
     pub fn create_folder(&self, req: CreateFolderRequest) -> Result<Folder> {
+        // 获取当前工作空间 ID
+        let workspace_id = self.repo.get_current_workspace_id()?;
+
         // 获取最大排序值
         let sort_order = self.repo.get_max_sort_order(req.parent_id.as_deref())? + 1;
 
         // 使用构造函数创建文件夹
-        let mut folder = Folder::new(req.name, req.parent_id, req.color, req.icon);
+        let mut folder = Folder::new(req.name, req.parent_id, req.color, req.icon, workspace_id);
 
         // 设置计算得到的 sort_order
         folder.sort_order = sort_order;

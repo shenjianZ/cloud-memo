@@ -21,6 +21,10 @@ pub struct Folder {
     #[serde(default)]
     pub sort_order: i32,  // 排序顺序（同级文件夹内的排序）
 
+    // ===== 工作空间支持 =====
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,  // 工作空间 ID（支持多工作空间）
+
     // ===== 时间戳 =====
     pub created_at: i64,  // 创建时间（Unix 时间戳，秒）
     pub updated_at: i64,  // 更新时间（Unix 时间戳，秒）
@@ -48,11 +52,13 @@ impl Folder {
     /// - `parent_id`: 父文件夹 ID（可选）
     /// - `color`: 颜色标识（可选）
     /// - `icon`: 图标（可选）
+    /// - `workspace_id`: 工作空间 ID（可选）
     pub fn new(
         name: String,
         parent_id: Option<String>,
         color: Option<String>,
         icon: Option<String>,
+        workspace_id: Option<String>,
     ) -> Self {
         let now = chrono::Utc::now().timestamp();
 
@@ -63,6 +69,7 @@ impl Folder {
             icon,
             color,
             sort_order: 0,
+            workspace_id,
             created_at: now,
             updated_at: now,
             is_deleted: false,
@@ -75,7 +82,7 @@ impl Folder {
 
     /// 创建根文件夹（用于默认文件夹）
     pub fn root(name: String) -> Self {
-        Self::new(name, None, None, None)
+        Self::new(name, None, None, None, None)
     }
 }
 

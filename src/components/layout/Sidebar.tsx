@@ -9,6 +9,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { NoteItem } from '../notes/NoteItem'
 import { FolderNode } from './FolderNode'
 import { FolderContextMenu, NoteContextMenu } from '@/components/context-menu'
+import { FolderInlineInput } from './FolderInlineInput'
 import { getNoteTitle } from '@/lib/noteHelpers'
 
 interface FolderTree {
@@ -39,6 +40,10 @@ export function Sidebar() {
   const [isLoading, setIsLoading] = useState(false)
   const isCreatingRef = useRef(false) // 使用 ref 防止重复创建
   const [currentPath, setCurrentPath] = useState(window.location.hash.slice(1) || '/')
+
+  // 内联输入状态
+  const [isCreatingRoot, setIsCreatingRoot] = useState(false)
+  const [creatingSubfolderForId, setCreatingSubfolderForId] = useState<string | null>(null)
 
   // 获取当前活动笔记 ID 和当前路径
   const activeNoteId = searchParams.get('noteId')
@@ -153,6 +158,7 @@ export function Sidebar() {
   const renderFolder = (folder: FolderTree, level: number = 0) => {
     const isExpanded = expandedFolders.has(folder.id)
     const isActive = folderFilter === folder.id
+    const isCreatingSub = creatingSubfolderForId === folder.id
 
     return (
       <FolderNode
@@ -167,6 +173,9 @@ export function Sidebar() {
           navigate(`/?folder=${folderId}`)
         }}
         searchQuery={searchQueryLower}
+        isCreatingSub={isCreatingSub}
+        onCreateSubfolder={handleCreateSubfolder}
+        onCancelCreatingSub={() => setCreatingSubfolderForId(null)}
       />
     )
   }
@@ -181,17 +190,38 @@ export function Sidebar() {
   // 获取搜索关键词（用于传递给 FolderNode）
   const searchQueryLower = searchQuery.toLowerCase()
 
-  // 创建新文件夹
-  const handleCreateFolder = useCallback(async () => {
-    const name = prompt('请输入文件夹名称:', '新建文件夹')
-    if (!name || !name.trim()) return
-
+  // 创建根文件夹（内联输入）
+  const handleCreateRootFolder = async (name: string) => {
     try {
-      await createFolder(name.trim())
+      await createFolder(name)
+      setIsCreatingRoot(false)
     } catch (error) {
       console.error('Failed to create folder:', error)
+      throw error
     }
-  }, [createFolder])
+  }
+
+  // 创建子文件夹（内联输入）
+  const handleCreateSubfolder = async (name: string, parentId: string) => {
+    try {
+      await createFolder(name, parentId)
+      setCreatingSubfolderForId(null)
+      // 自动展开父文件夹
+      setExpandedFolders(prev => new Set([...prev, parentId]))
+    } catch (error) {
+      console.error('Failed to create subfolder:', error)
+      throw error
+    }
+  }
+
+  // 开始创建子文件夹（由右键菜单触发）
+  const startCreatingSubfolder = useCallback((folderId: string) => {
+    setCreatingSubfolderForId(folderId)
+    // 自动展开父文件夹以显示输入框
+    setExpandedFolders(prev => new Set([...prev, folderId]))
+    // 隐藏右键菜单
+    hideFolderContextMenu()
+  }, [hideFolderContextMenu])
 
   // 创建新笔记 - 使用严格防重复机制
   const handleCreateNote = useCallback(async () => {
@@ -351,7 +381,7 @@ export function Sidebar() {
                     onClick={(e) => {
                       e.preventDefault()
                       e.stopPropagation()
-                      handleCreateFolder()
+                      setIsCreatingRoot(true)
                     }}
                     title="新建文件夹"
                     type="button"
@@ -365,11 +395,31 @@ export function Sidebar() {
               {tree.length > 0 ? (
                 <div className="space-y-1">
                   {tree.map(folder => renderFolder(folder))}
+
+                  {/* 根文件夹内联输入 */}
+                  {isCreatingRoot && (
+                    <FolderInlineInput
+                      parentId={null}
+                      onCreate={handleCreateRootFolder}
+                      onCancel={() => setIsCreatingRoot(false)}
+                    />
+                  )}
                 </div>
               ) : (
-                <div className="text-center text-muted-foreground text-xs py-4">
-                  暂无文件夹
-                </div>
+                <>
+                  <div className="text-center text-muted-foreground text-xs py-4">
+                    暂无文件夹
+                  </div>
+
+                  {/* 根文件夹内联输入（无文件夹时也显示） */}
+                  {isCreatingRoot && (
+                    <FolderInlineInput
+                      parentId={null}
+                      onCreate={handleCreateRootFolder}
+                      onCancel={() => setIsCreatingRoot(false)}
+                    />
+                  )}
+                </>
               )}
 
               {/* 根目录笔记（不在任何文件夹中的笔记） */}
@@ -414,6 +464,7 @@ export function Sidebar() {
         isVisible={folderContextMenu.isVisible}
         onClose={hideFolderContextMenu}
         folderId={folderContextMenu.folderId}
+        onCreateSubfolder={startCreatingSubfolder}
       />
       <NoteContextMenu
         position={noteContextMenu.position}

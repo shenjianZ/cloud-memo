@@ -4,6 +4,7 @@ import { useContextMenuStore } from '@/store/contextMenuStore'
 import { useNoteStore } from '@/store/noteStore'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { NoteItem } from '../notes/NoteItem'
+import { FolderInlineInput } from './FolderInlineInput'
 
 interface FolderTreeNode {
   id: string
@@ -21,6 +22,9 @@ interface FolderNodeProps {
   onToggle: (folderId: string) => void
   onClick: (folderId: string) => void
   searchQuery?: string  // 搜索关键词（小写）
+  isCreatingSub?: boolean  // 是否正在创建子文件夹
+  onCreateSubfolder?: (name: string, parentId: string) => Promise<void>  // 创建子文件夹回调
+  onCancelCreatingSub?: () => void  // 取消创建子文件夹回调
 }
 
 /**
@@ -36,6 +40,9 @@ export function FolderNode({
   onToggle,
   onClick,
   searchQuery = '',
+  isCreatingSub = false,
+  onCreateSubfolder,
+  onCancelCreatingSub,
 }: FolderNodeProps) {
   const { showFolderContextMenu, showNoteContextMenu } = useContextMenuStore()
   const { folders, notes } = useNoteStore()
@@ -144,8 +151,21 @@ export function FolderNode({
                 onToggle={onToggle}
                 onClick={onClick}
                 searchQuery={searchQuery}
+                isCreatingSub={false}
+                onCreateSubfolder={onCreateSubfolder}
+                onCancelCreatingSub={onCancelCreatingSub}
               />
             ))}
+
+          {/* 内联输入：创建子文件夹 */}
+          {isCreatingSub && onCreateSubfolder && onCancelCreatingSub && (
+            <FolderInlineInput
+              parentId={folder.id}
+              level={level + 1}
+              onCreate={(name) => onCreateSubfolder(name, folder.id)}
+              onCancel={onCancelCreatingSub}
+            />
+          )}
 
           {/* 该文件夹的笔记 */}
           {folderNotes.length > 0 && (

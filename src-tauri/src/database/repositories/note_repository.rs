@@ -17,11 +17,41 @@ impl NoteRepository {
         Self { pool }
     }
 
+    /// 获取当前工作空间 ID（基于当前用户的 is_current 标记）
+    fn get_current_workspace_id(&self) -> Result<Option<String>> {
+        let conn = self.pool.get()?;
+
+        // 获取当前用户 ID
+        let user_id: Option<String> = conn
+            .query_row(
+                "SELECT user_id FROM user_auth WHERE is_current = 1 LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+
+        let user_id = match user_id {
+            Some(uid) => uid,
+            None => return Ok(None),  // 未登录
+        };
+
+        // 查询该用户的当前工作空间（is_current = 1）
+        let workspace_id: Option<String> = conn
+            .query_row(
+                "SELECT id FROM workspaces WHERE user_id = ? AND is_current = 1 AND is_deleted = 0 LIMIT 1",
+                params![&user_id],
+                |row| row.get(0),
+            )
+            .ok();
+
+        Ok(workspace_id)
+    }
+
     /// 根据 ID 查找笔记
     pub fn find_by_id(&self, id: &str) -> Result<Option<Note>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, excerpt, markdown_cache, folder_id, is_favorite,
+            "SELECT id, title, content, excerpt, markdown_cache, workspace_id, folder_id, is_favorite,
                     is_deleted, is_pinned, author, created_at, updated_at, deleted_at,
                     word_count, read_time_minutes,
                     server_ver, is_dirty, last_synced_at
@@ -36,19 +66,20 @@ impl NoteRepository {
                 content: row.get(2)?,
                 excerpt: row.get(3)?,
                 markdown_cache: row.get(4)?,
-                folder_id: row.get(5)?,
-                is_favorite: row.get(6)?,
-                is_deleted: row.get(7)?,
-                is_pinned: row.get(8)?,
-                author: row.get(9)?,
-                created_at: row.get(10)?,
-                updated_at: row.get(11)?,
-                deleted_at: row.get(12)?,
-                word_count: row.get(13)?,
-                read_time_minutes: row.get(14)?,
-                server_ver: row.get(15)?,
-                is_dirty: row.get(16)?,
-                last_synced_at: row.get(17)?,
+                workspace_id: row.get(5)?,
+                folder_id: row.get(6)?,
+                is_favorite: row.get(7)?,
+                is_deleted: row.get(8)?,
+                is_pinned: row.get(9)?,
+                author: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+                deleted_at: row.get(13)?,
+                word_count: row.get(14)?,
+                read_time_minutes: row.get(15)?,
+                server_ver: row.get(16)?,
+                is_dirty: row.get(17)?,
+                last_synced_at: row.get(18)?,
             })
         });
 
@@ -59,40 +90,43 @@ impl NoteRepository {
         }
     }
 
-    /// 查找所有笔记
+    /// 查找所有笔记（仅当前工作空间）
     pub fn find_all(&self) -> Result<Vec<Note>> {
+        let workspace_id = self.get_current_workspace_id()?;
+
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, excerpt, markdown_cache, folder_id, is_favorite,
+            "SELECT id, title, content, excerpt, markdown_cache, workspace_id, folder_id, is_favorite,
                     is_deleted, is_pinned, author, created_at, updated_at, deleted_at,
                     word_count, read_time_minutes,
                     server_ver, is_dirty, last_synced_at
              FROM notes
-             WHERE is_deleted = 0
+             WHERE is_deleted = 0 AND (workspace_id = ? OR workspace_id IS NULL)
              ORDER BY updated_at DESC",
         )?;
 
         let notes = stmt
-            .query_map([], |row| {
+            .query_map(params![workspace_id], |row| {
                 Ok(Note {
                     id: row.get(0)?,
                     title: row.get(1)?,
                     content: row.get(2)?,
                     excerpt: row.get(3)?,
                     markdown_cache: row.get(4)?,
-                    folder_id: row.get(5)?,
-                    is_favorite: row.get(6)?,
-                    is_deleted: row.get(7)?,
-                    is_pinned: row.get(8)?,
-                    author: row.get(9)?,
-                    created_at: row.get(10)?,
-                    updated_at: row.get(11)?,
-                    deleted_at: row.get(12)?,
-                    word_count: row.get(13)?,
-                    read_time_minutes: row.get(14)?,
-                    server_ver: row.get(15)?,
-                    is_dirty: row.get(16)?,
-                    last_synced_at: row.get(17)?,
+                    workspace_id: row.get(5)?,
+                    folder_id: row.get(6)?,
+                    is_favorite: row.get(7)?,
+                    is_deleted: row.get(8)?,
+                    is_pinned: row.get(9)?,
+                    author: row.get(10)?,
+                    created_at: row.get(11)?,
+                    updated_at: row.get(12)?,
+                    deleted_at: row.get(13)?,
+                    word_count: row.get(14)?,
+                    read_time_minutes: row.get(15)?,
+                    server_ver: row.get(16)?,
+                    is_dirty: row.get(17)?,
+                    last_synced_at: row.get(18)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()
@@ -112,38 +146,41 @@ impl NoteRepository {
     ///
     /// 返回所有已删除的笔记列表，包含完整的笔记信息
     pub fn find_deleted(&self) -> Result<Vec<Note>> {
+        let workspace_id = self.get_current_workspace_id()?;
+
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT id, title, content, excerpt, markdown_cache, folder_id, is_favorite,
+            "SELECT id, title, content, excerpt, markdown_cache, workspace_id, folder_id, is_favorite,
                     is_deleted, is_pinned, author, created_at, updated_at, deleted_at,
                     word_count, read_time_minutes,
                     server_ver, is_dirty, last_synced_at
              FROM notes
-             WHERE is_deleted = 1
+             WHERE is_deleted = 1 AND (workspace_id = ? OR workspace_id IS NULL)
              ORDER BY deleted_at DESC",
         )?;
 
         let notes = stmt
-            .query_map([], |row| {
+            .query_map(params![workspace_id], |row| {
                 Ok(Note {
                     id: row.get(0)?,
                     title: row.get(1)?,
                     content: row.get(2)?,
                     excerpt: row.get(3)?,
                     markdown_cache: row.get(4)?,
-                    folder_id: row.get(5)?,
-                    is_favorite: row.get(6)?,
-                    is_deleted: row.get(7)?,
-                    is_pinned: row.get(8)?,
-                    author: row.get(9)?,
-                    created_at: row.get(10)?,
-                    updated_at: row.get(11)?,
-                    deleted_at: row.get(12)?,
-                    word_count: row.get(13)?,
-                    read_time_minutes: row.get(14)?,
-                    server_ver: row.get(15)?,
-                    is_dirty: row.get(16)?,
-                    last_synced_at: row.get(17)?,
+                    workspace_id: row.get(5)?,
+                    folder_id: row.get(6)?,
+                    is_favorite: row.get(7)?,
+                    is_deleted: row.get(8)?,
+                    is_pinned: row.get(9)?,
+                    author: row.get(10)?,
+                    created_at: row.get(11)?,
+                    updated_at: row.get(12)?,
+                    deleted_at: row.get(13)?,
+                    word_count: row.get(14)?,
+                    read_time_minutes: row.get(15)?,
+                    server_ver: row.get(16)?,
+                    is_dirty: row.get(17)?,
+                    last_synced_at: row.get(18)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()
@@ -155,18 +192,21 @@ impl NoteRepository {
 
     /// 创建新笔记
     pub fn create(&self, note: &Note) -> Result<Note> {
+        let workspace_id = self.get_current_workspace_id()?;
         let conn = self.pool.get()?;
         conn.execute(
-            "INSERT INTO notes (id, title, content, excerpt, folder_id,
+            "INSERT INTO notes (id, title, content, excerpt, markdown_cache, workspace_id, folder_id,
                               is_favorite, is_deleted, is_pinned, author,
-                              created_at, updated_at, word_count, read_time_minutes,
+                              created_at, updated_at, deleted_at, word_count, read_time_minutes,
                               server_ver, is_dirty, last_synced_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 note.id,
                 note.title,
                 note.content,
                 note.excerpt,
+                note.markdown_cache,
+                workspace_id,
                 note.folder_id,
                 note.is_favorite as i32,
                 note.is_deleted as i32,
@@ -174,6 +214,7 @@ impl NoteRepository {
                 note.author,
                 note.created_at,
                 note.updated_at,
+                note.deleted_at,
                 note.word_count,
                 note.read_time_minutes,
                 note.server_ver,
@@ -262,42 +303,44 @@ impl NoteRepository {
 
     /// 全文搜索笔记
     pub fn search(&self, query: &str) -> Result<Vec<Note>> {
+        let workspace_id = self.get_current_workspace_id()?;
         let conn = self.pool.get()?;
         let search_query = format!("{}*", query); // FTS5 前缀搜索
 
         let mut stmt = conn.prepare(
-            "SELECT n.id, n.title, n.content, n.excerpt, n.markdown_cache, n.folder_id, n.is_favorite,
+            "SELECT n.id, n.title, n.content, n.excerpt, n.markdown_cache, n.workspace_id, n.folder_id, n.is_favorite,
                     n.is_deleted, n.is_pinned, n.author, n.created_at, n.updated_at, n.deleted_at,
                     n.word_count, n.read_time_minutes,
                     n.server_ver, n.is_dirty, n.last_synced_at
              FROM notes n
              JOIN notes_fts f ON n.id = f.note_id
-             WHERE notes_fts MATCH ? AND n.is_deleted = 0
+             WHERE notes_fts MATCH ? AND n.is_deleted = 0 AND (n.workspace_id = ? OR n.workspace_id IS NULL)
              ORDER BY n.updated_at DESC
              LIMIT 50"
         )?;
 
         let notes = stmt
-            .query_map(params![search_query], |row| {
+            .query_map(params![search_query, workspace_id], |row| {
                 Ok(Note {
                     id: row.get(0)?,
                     title: row.get(1)?,
                     content: row.get(2)?,
                     excerpt: row.get(3)?,
                     markdown_cache: row.get(4)?,
-                    folder_id: row.get(5)?,
-                    is_favorite: row.get(6)?,
-                    is_deleted: row.get(7)?,
-                    is_pinned: row.get(8)?,
-                    author: row.get(9)?,
-                    created_at: row.get(10)?,
-                    updated_at: row.get(11)?,
-                    deleted_at: row.get(12)?,
-                    word_count: row.get(13)?,
-                    read_time_minutes: row.get(14)?,
-                    server_ver: row.get(15)?,
-                    is_dirty: row.get(16)?,
-                    last_synced_at: row.get(17)?,
+                    workspace_id: row.get(5)?,
+                    folder_id: row.get(6)?,
+                    is_favorite: row.get(7)?,
+                    is_deleted: row.get(8)?,
+                    is_pinned: row.get(9)?,
+                    author: row.get(10)?,
+                    created_at: row.get(11)?,
+                    updated_at: row.get(12)?,
+                    deleted_at: row.get(13)?,
+                    word_count: row.get(14)?,
+                    read_time_minutes: row.get(15)?,
+                    server_ver: row.get(16)?,
+                    is_dirty: row.get(17)?,
+                    last_synced_at: row.get(18)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()
@@ -313,10 +356,11 @@ impl NoteRepository {
     ///
     /// 返回 `is_deleted = 0` 的笔记总数
     pub fn count(&self) -> Result<i64> {
+        let workspace_id = self.get_current_workspace_id()?;
         let conn = self.pool.get()?;
         let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM notes WHERE is_deleted = 0",
-            [],
+            "SELECT COUNT(*) FROM notes WHERE is_deleted = 0 AND (workspace_id = ? OR workspace_id IS NULL)",
+            params![workspace_id],
             |row| row.get(0),
         )?;
 

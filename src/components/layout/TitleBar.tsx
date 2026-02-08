@@ -84,6 +84,9 @@ export function TitleBar() {
         <span className="titlebar-title">Markdown Notes</span>
       </div>
 
+      {/* 中间拖拽区域 - 占据剩余空间 */}
+      <div data-tauri-drag-region className="titlebar-drag-spacer" />
+
       {/* 用户区域 - 右侧，靠近窗口控制按钮 */}
       <div className="titlebar-user-area">
         <UserArea />
