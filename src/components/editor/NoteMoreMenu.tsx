@@ -2,7 +2,7 @@ import { useRef, useEffect, useState } from 'react'
 import { Download, Trash2, Copy, ExternalLink } from 'lucide-react'
 import { useNoteStore } from '@/store/noteStore'
 import { toast } from 'sonner'
-import { tiptapJsonToMarkdown } from '@/lib/tiptapMarkdown'
+import { tiptapJsonToMarkdown } from '@/lib/tiptapSerializer'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 
 interface NoteMoreMenuProps {
@@ -12,7 +12,7 @@ interface NoteMoreMenuProps {
 }
 
 export function NoteMoreMenu({ noteId, content, onClose }: NoteMoreMenuProps) {
-  const { deleteNote, exportNote, getNote } = useNoteStore()
+  const { deleteNote, exportNote } = useNoteStore()
   const menuRef = useRef<HTMLDivElement>(null)
 
   // 删除确认对话框状态

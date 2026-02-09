@@ -33,5 +33,6 @@ export default {
       },
     },
   },
+  // Tailwind CSS v4: 插件在 CSS 文件中通过 @plugin 指令声明
   plugins: [],
 }

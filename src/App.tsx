@@ -84,12 +84,18 @@ function App() {
       navigate('/settings')
     }
 
+    const handleCreateNote = () => {
+      navigate('/editor/new')
+    }
+
     window.addEventListener('keybinding-toggle-sidebar', handleToggleSidebar)
     window.addEventListener('keybinding-open-settings', handleOpenSettings)
+    window.addEventListener('keybinding-note-new', handleCreateNote)
 
     return () => {
       window.removeEventListener('keybinding-toggle-sidebar', handleToggleSidebar)
       window.removeEventListener('keybinding-open-settings', handleOpenSettings)
+      window.removeEventListener('keybinding-note-new', handleCreateNote)
     }
   }, [navigate, toggleSidebar])
 

@@ -12,6 +12,7 @@
         "tauri:build": "tauri build"
     },
     "dependencies": {
+        "@aarkue/tiptap-math-extension": "^1.4.0",
         "@codemirror/autocomplete": "^6.20.0",
         "@codemirror/commands": "^6.10.1",
         "@codemirror/lang-markdown": "^6.5.0",
@@ -63,6 +64,7 @@
         "clsx": "^2.1.1",
         "date-fns": "^4.1.0",
         "highlight.js": "^11.11.1",
+        "katex": "^0.16.28",
         "lowlight": "^3.3.0",
         "lucide-react": "^0.468.0",
         "next-themes": "^0.4.6",
@@ -71,14 +73,19 @@
         "react-markdown": "^9.0.3",
         "react-router-dom": "^7.8.2",
         "rehype-highlight": "^7.0.2",
+        "rehype-katex": "^7.0.1",
+        "rehype-raw": "^7.0.0",
         "remark-gfm": "^4.0.0",
+        "remark-math": "^6.0.0",
         "sonner": "^1.7.3",
         "tailwind-merge": "^2.6.0",
         "tailwindcss": "^4.1.12",
+        "tiptap-markdown": "^0.9.0",
         "zustand": "^4.5.0"
     },
     "devDependencies": {
         "@eslint/js": "^9.33.0",
+        "@tailwindcss/typography": "^0.5.19",
         "@tauri-apps/cli": "^2",
         "@types/node": "^24.3.0",
         "@types/react": "^19.1.8",

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useNoteStore } from '@/store/noteStore'
 import { getNoteTitle } from '@/lib/noteHelpers'
 import { formatDistanceToNow } from 'date-fns'
@@ -9,8 +10,10 @@ import {
   CheckSquare,
   Square,
   AlertCircle,
+  ArrowLeft,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { Button } from '@/components/ui/button'
 import { listDeletedNotes, permanentlyDeleteNote, permanentlyDeleteNotes } from '@/services/noteApi'
 
 interface Note {
@@ -37,6 +40,7 @@ interface Note {
  * - 永久删除笔记
  */
 export default function Trash() {
+  const navigate = useNavigate()
   const { restoreNote, restoreNotes } = useNoteStore()
   const [trashNotes, setTrashNotes] = useState<Note[]>([])
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -194,18 +198,27 @@ export default function Trash() {
 
   if (isLoading) {
     return (
-      <div className="flex h-64 items-center justify-center">
+      <div className="flex h-64 items-center justify-center px-4 sm:px-6">
         <div className="text-muted-foreground">加载中...</div>
       </div>
     )
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 px-4 sm:px-6 py-4 sm:py-6 max-w-5xl mx-auto">
       {/* 标题和操作栏 */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">回收站</h1>
+      <div className="flex items-center gap-3">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 w-8 p-0"
+          onClick={() => navigate(-1)}
+          title="返回"
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
+        <div className="flex-1">
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">回收站</h1>
           <p className="text-muted-foreground">
             {trashNotes.length > 0
               ? `共 ${trashNotes.length} 篇已删除的笔记`
@@ -214,54 +227,59 @@ export default function Trash() {
         </div>
 
         {/* 批量操作按钮 */}
-        {trashNotes.length > 0 && (
-          <div className="flex gap-2">
-            {selectedIds.size > 0 && (
-              <>
-                <button
-                  onClick={handleBatchRestore}
-                  disabled={isRestoring || isDeleting}
-                  className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-                >
-                  <RotateCcw className="h-4 w-4" />
-                  恢复选中 ({selectedIds.size})
-                </button>
-                <button
-                  onClick={handleBatchPermanentDelete}
-                  disabled={isDeleting}
-                  className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
-                >
-                  <Trash2 className="h-4 w-4" />
-                  永久删除选中 ({selectedIds.size})
-                </button>
-                <button
-                  onClick={() => setSelectedIds(new Set())}
-                  className="inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium hover:bg-accent"
-                >
-                  取消选择
-                </button>
-              </>
-            )}
-
+        {trashNotes.length > 0 && selectedIds.size > 0 && (
+          <div className="flex gap-2 flex-wrap">
             <button
-              onClick={toggleSelectAll}
-              className="inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium hover:bg-accent"
+              onClick={handleBatchRestore}
+              disabled={isRestoring || isDeleting}
+              className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
             >
-              {selectedIds.size === trashNotes.length ? (
-                <>
-                  <Square className="h-4 w-4" />
-                  取消全选
-                </>
-              ) : (
-                <>
-                  <CheckSquare className="h-4 w-4" />
-                  全选
-                </>
-              )}
+              <RotateCcw className="h-4 w-4" />
+              <span className="hidden sm:inline">恢复选中</span>
+              <span className="sm:hidden">恢复</span>
+              ({selectedIds.size})
+            </button>
+            <button
+              onClick={handleBatchPermanentDelete}
+              disabled={isDeleting}
+              className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+            >
+              <Trash2 className="h-4 w-4" />
+              <span className="hidden sm:inline">永久删除</span>
+              <span className="sm:hidden">删除</span>
+              ({selectedIds.size})
+            </button>
+            <button
+              onClick={() => setSelectedIds(new Set())}
+              className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium hover:bg-accent"
+            >
+              取消选择
             </button>
           </div>
         )}
       </div>
+
+      {/* 全选按钮 */}
+      {trashNotes.length > 0 && (
+        <div className="flex items-center gap-2">
+          <button
+            onClick={toggleSelectAll}
+            className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium hover:bg-accent"
+          >
+            {selectedIds.size === trashNotes.length ? (
+              <>
+                <Square className="h-4 w-4" />
+                取消全选
+              </>
+            ) : (
+              <>
+                <CheckSquare className="h-4 w-4" />
+                全选
+              </>
+            )}
+          </button>
+        </div>
+      )}
 
       {/* 回收站为空 */}
       {trashNotes.length === 0 && (
@@ -275,67 +293,68 @@ export default function Trash() {
         </div>
       )}
 
-      {/* 已删除笔记列表 */}
+      {/* 已删除笔记卡片网格 */}
       {trashNotes.length > 0 && (
-        <div className="space-y-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {trashNotes.map((note) => (
             <div
               key={note.id}
-              className={`group flex items-start gap-4 rounded-lg border p-4 transition-colors hover:bg-accent ${
+              className={`group rounded-lg border bg-card p-4 transition-all hover:shadow-md ${
                 selectedIds.has(note.id) ? 'border-primary bg-accent' : ''
               }`}
             >
-              {/* 选择框 */}
-              <button
-                onClick={() => toggleSelect(note.id)}
-                className="mt-1 flex-shrink-0"
-              >
-                {selectedIds.has(note.id) ? (
-                  <CheckSquare className="h-5 w-5 text-primary" />
-                ) : (
-                  <Square className="h-5 w-5 text-muted-foreground" />
-                )}
-              </button>
-
-              {/* 笔记信息 */}
-              <div className="min-w-0 flex-1">
-                <h3 className="truncate text-lg font-semibold">{getNoteTitle(note)}</h3>
-                <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
-                  {note.deletedAt && (
-                    <>
-                      <AlertCircle className="h-4 w-4" />
-                      删除于 {formatDistanceToNow(note.deletedAt, { addSuffix: true, locale: zhCN })}
-                    </>
+              {/* 顶部：选择框和标题 */}
+              <div className="flex items-start gap-3 mb-3">
+                <button
+                  onClick={() => toggleSelect(note.id)}
+                  className="mt-1 flex-shrink-0"
+                  title={selectedIds.has(note.id) ? '取消选择' : '选择'}
+                >
+                  {selectedIds.has(note.id) ? (
+                    <CheckSquare className="h-5 w-5 text-primary" />
+                  ) : (
+                    <Square className="h-5 w-5 text-muted-foreground" />
                   )}
+                </button>
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-semibold text-base line-clamp-1 pr-2">{getNoteTitle(note)}</h3>
+                  <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                    <AlertCircle className="h-3 w-3" />
+                    {note.deletedAt && (
+                      <span className="truncate">
+                        {formatDistanceToNow(note.deletedAt, { addSuffix: true, locale: zhCN })}
+                      </span>
+                    )}
+                  </div>
                 </div>
-
-                {/* 笔记摘要 */}
-                {note.markdownCache && (
-                  <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">
-                    {note.markdownCache.slice(0, 200)}
-                  </p>
-                )}
               </div>
 
+              {/* 笔记摘要 */}
+              {note.markdownCache && (
+                <p className="text-sm text-muted-foreground line-clamp-2 mb-3 pl-8">
+                  {note.markdownCache.slice(0, 150)}
+                </p>
+              )}
+
               {/* 操作按钮 */}
-              <div className="flex gap-1">
-                {/* 恢复按钮 */}
+              <div className="flex gap-2 pl-8">
                 <button
                   onClick={() => handleRestore(note.id)}
                   disabled={isRestoring || isDeleting}
-                  className="flex-shrink-0 rounded-lg p-2 text-muted-foreground transition-colors hover:bg-green-100 hover:text-green-700 disabled:opacity-50"
+                  className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-sm font-medium text-green-700 hover:bg-green-100 disabled:opacity-50 transition-colors"
                   title="恢复笔记"
                 >
-                  <RotateCcw className="h-5 w-5" />
+                  <RotateCcw className="h-4 w-4" />
+                  恢复
                 </button>
-                {/* 硬删除按钮 */}
                 <button
                   onClick={() => handlePermanentDelete(note.id)}
                   disabled={isDeleting}
-                  className="flex-shrink-0 rounded-lg p-2 text-muted-foreground transition-colors hover:bg-red-100 hover:text-red-700 disabled:opacity-50"
+                  className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50 transition-colors"
                   title="永久删除"
                 >
-                  <Trash2 className="h-5 w-5" />
+                  <Trash2 className="h-4 w-4" />
+                  删除
                 </button>
               </div>
             </div>

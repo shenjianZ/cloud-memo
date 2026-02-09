@@ -23,6 +23,7 @@ interface FolderNodeProps {
   onClick: (folderId: string) => void
   searchQuery?: string  // 搜索关键词（小写）
   isCreatingSub?: boolean  // 是否正在创建子文件夹
+  creatingSubfolderForId?: string | null  // 正在创建子文件夹的文件夹 ID
   onCreateSubfolder?: (name: string, parentId: string) => Promise<void>  // 创建子文件夹回调
   onCancelCreatingSub?: () => void  // 取消创建子文件夹回调
 }
@@ -41,6 +42,7 @@ export function FolderNode({
   onClick,
   searchQuery = '',
   isCreatingSub = false,
+  creatingSubfolderForId = null,
   onCreateSubfolder,
   onCancelCreatingSub,
 }: FolderNodeProps) {
@@ -151,7 +153,8 @@ export function FolderNode({
                 onToggle={onToggle}
                 onClick={onClick}
                 searchQuery={searchQuery}
-                isCreatingSub={false}
+                isCreatingSub={creatingSubfolderForId === child.id}
+                creatingSubfolderForId={creatingSubfolderForId}
                 onCreateSubfolder={onCreateSubfolder}
                 onCancelCreatingSub={onCancelCreatingSub}
               />

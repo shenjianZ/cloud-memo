@@ -1,6 +1,11 @@
 import { invoke } from '@tauri-apps/api/core'
 
 /**
+ * Markdown 预览样式模式
+ */
+export type MarkdownPreviewStyle = 'minimal' | 'default' | 'rich'
+
+/**
  * 编辑器设置模型
  */
 export interface EditorSettings {
@@ -13,6 +18,7 @@ export interface EditorSettings {
   headingFontWeight: number
   codeFontFamily: string
   codeFontSize: number
+  markdownPreviewStyle: MarkdownPreviewStyle
   updatedAt: number
 }
 
@@ -28,6 +34,7 @@ export interface UpdateEditorSettingsRequest {
   headingFontWeight?: number
   codeFontFamily?: string
   codeFontSize?: number
+  markdownPreviewStyle?: MarkdownPreviewStyle
 }
 
 /**

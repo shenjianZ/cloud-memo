@@ -1,6 +1,6 @@
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
-import { tiptapJsonToMarkdown } from './tiptapMarkdown'
+import { tiptapJsonToMarkdown } from './tiptapSerializer'
 import type { TiptapContent, Note } from '@/types/note'
 import { toast } from 'sonner'
 import { getNoteTitle } from './noteHelpers'

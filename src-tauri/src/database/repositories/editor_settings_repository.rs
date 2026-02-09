@@ -17,7 +17,7 @@ impl EditorSettingsRepository {
         let mut stmt = conn.prepare(
             "SELECT id, content_font_family, content_font_size, content_font_weight,
                     content_line_height, heading_font_family, heading_font_weight,
-                    code_font_family, code_font_size, updated_at
+                    code_font_family, code_font_size, markdown_preview_style, updated_at
              FROM editor_settings WHERE id = 1"
         )?;
 
@@ -32,7 +32,8 @@ impl EditorSettingsRepository {
                 heading_font_weight: row.get(6)?,
                 code_font_family: row.get(7)?,
                 code_font_size: row.get(8)?,
-                updated_at: row.get(9)?,
+                markdown_preview_style: row.get(9)?,
+                updated_at: row.get(10)?,
             })
         });
 
@@ -55,8 +56,8 @@ impl EditorSettingsRepository {
             "INSERT OR REPLACE INTO editor_settings (
                 id, content_font_family, content_font_size, content_font_weight,
                 content_line_height, heading_font_family, heading_font_weight,
-                code_font_family, code_font_size, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                code_font_family, code_font_size, markdown_preview_style, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 settings.id,
                 &settings.content_font_family,
@@ -67,6 +68,7 @@ impl EditorSettingsRepository {
                 settings.heading_font_weight,
                 &settings.code_font_family,
                 settings.code_font_size,
+                &settings.markdown_preview_style,
                 settings.updated_at,
             ],
         )?;
@@ -90,6 +92,7 @@ impl EditorSettingsRepository {
             heading_font_weight: req.heading_font_weight.unwrap_or(current.heading_font_weight),
             code_font_family: req.code_font_family.clone().unwrap_or(current.code_font_family),
             code_font_size: req.code_font_size.unwrap_or(current.code_font_size),
+            markdown_preview_style: req.markdown_preview_style.clone().unwrap_or(current.markdown_preview_style),
             updated_at: chrono::Utc::now().timestamp(),
         };
 
@@ -104,7 +107,8 @@ impl EditorSettingsRepository {
                 heading_font_weight = ?6,
                 code_font_family = ?7,
                 code_font_size = ?8,
-                updated_at = ?9
+                markdown_preview_style = ?9,
+                updated_at = ?10
             WHERE id = 1",
             params![
                 &updated.content_font_family,
@@ -115,6 +119,7 @@ impl EditorSettingsRepository {
                 updated.heading_font_weight,
                 &updated.code_font_family,
                 updated.code_font_size,
+                &updated.markdown_preview_style,
                 updated.updated_at,
             ],
         )?;

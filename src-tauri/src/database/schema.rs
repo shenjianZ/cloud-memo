@@ -122,6 +122,7 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             heading_font_weight INTEGER NOT NULL DEFAULT 600,
             code_font_family TEXT NOT NULL DEFAULT 'JetBrains Mono, Fira Code, Consolas, Courier New, monospace',
             code_font_size INTEGER NOT NULL DEFAULT 14,
+            markdown_preview_style TEXT NOT NULL DEFAULT 'default',
             updated_at INTEGER NOT NULL
         );
 

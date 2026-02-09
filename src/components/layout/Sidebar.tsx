@@ -1,11 +1,11 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
-import { Search, Settings, ChevronDown, ChevronRight, Plus, Star, FolderPlus, Home, Trash2 } from 'lucide-react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import { Search, Settings, PanelLeftClose, PanelLeftOpen, Plus, FolderPlus, Home } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useNoteStore } from '@/store/noteStore'
 import { useContextMenuStore } from '@/store/contextMenuStore'
 import { cn } from '@/lib/utils'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom'
 import { NoteItem } from '../notes/NoteItem'
 import { FolderNode } from './FolderNode'
 import { FolderContextMenu, NoteContextMenu } from '@/components/context-menu'
@@ -36,6 +36,7 @@ export function Sidebar() {
   } = useContextMenuStore()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+  const location = useLocation()
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const isCreatingRef = useRef(false) // 使用 ref 防止重复创建
@@ -45,12 +46,16 @@ export function Sidebar() {
   const [isCreatingRoot, setIsCreatingRoot] = useState(false)
   const [creatingSubfolderForId, setCreatingSubfolderForId] = useState<string | null>(null)
 
-  // 获取当前活动笔记 ID 和当前路径
-  const activeNoteId = searchParams.get('noteId')
+  // 获取当前活动笔记 ID - 从路由路径中提取
+  const activeNoteId = useMemo(() => {
+    // 匹配 /editor/:noteId 格式的路由
+    const match = location.pathname.match(/^\/editor\/([^/]+)$/)
+    return match ? match[1] : null
+  }, [location.pathname])
+
+  // 获取当前路径
   const folderFilter = searchParams.get('folder')
   const isHomePage = currentPath === '/'
-  const isFavoritesPage = currentPath === '/favorites'
-  const isTrashPage = currentPath === '/trash'
 
   // 加载笔记数据
   useEffect(() => {
@@ -83,6 +88,26 @@ export function Sidebar() {
       window.removeEventListener('hashchange', handleHashChange)
     }
   }, [])
+
+  // 当打开笔记时，自动展开其所在文件夹
+  useEffect(() => {
+    if (activeNoteId) {
+      const note = notes.find(n => n.id === activeNoteId)
+      if (note?.folder) {
+        // 展开笔记所在的文件夹
+        setExpandedFolders(prev => new Set([...prev, note.folder!]))
+        // 递归展开所有祖先文件夹
+        const expandAncestors = (folderId: string) => {
+          const folder = folders.find(f => f.id === folderId)
+          if (folder?.parentId) {
+            setExpandedFolders(prev => new Set([...prev, folder.parentId!]))
+            expandAncestors(folder.parentId!)
+          }
+        }
+        expandAncestors(note.folder)
+      }
+    }
+  }, [activeNoteId, notes, folders])
 
   // 构建文件夹树结构（支持搜索过滤）
   const buildTree = (): FolderTree[] => {
@@ -174,6 +199,7 @@ export function Sidebar() {
         }}
         searchQuery={searchQueryLower}
         isCreatingSub={isCreatingSub}
+        creatingSubfolderForId={creatingSubfolderForId}
         onCreateSubfolder={handleCreateSubfolder}
         onCancelCreatingSub={() => setCreatingSubfolderForId(null)}
       />
@@ -263,16 +289,14 @@ export function Sidebar() {
       <div className="h-14 border-b border-border flex items-center justify-between px-3">
         {!isSidebarCollapsed ? (
           <>
-            <div className="flex items-center gap-2 flex-1">
-              <div className="relative flex-1">
-                <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  placeholder="搜索..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-8 h-9 text-sm"
-                />
-              </div>
+            <div className="relative flex-1">
+              <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="搜索..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-8 h-9 text-sm"
+              />
             </div>
 
             <div className="flex items-center gap-1">
@@ -292,7 +316,7 @@ export function Sidebar() {
                 onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
                 title="折叠侧边栏"
               >
-                <ChevronDown className="w-4 h-4" />
+                <PanelLeftClose className="w-4 h-4" />
               </Button>
             </div>
           </>
@@ -305,7 +329,7 @@ export function Sidebar() {
               onClick={() => setIsSidebarCollapsed(false)}
               title="展开侧边栏"
             >
-              <ChevronRight className="w-4 h-4" />
+              <PanelLeftOpen className="w-4 h-4" />
             </Button>
           </div>
         )}
@@ -315,8 +339,8 @@ export function Sidebar() {
       <div className="flex-1 overflow-y-auto custom-scrollbar">
         {!isSidebarCollapsed && (
           <>
-            {/* 快捷入口 */}
-            <div className="px-2 py-2 space-y-1 border-b border-border/50">
+            {/* 首页入口 */}
+            <div className="px-2 py-2 border-b border-border/50">
               <div
                 className={cn(
                   "flex items-center gap-2 px-3 py-2 hover:bg-muted/50 cursor-pointer rounded-lg transition-colors text-sm",
@@ -326,29 +350,6 @@ export function Sidebar() {
               >
                 <Home className="w-4 h-4 text-blue-500" />
                 <span className="font-medium">首页</span>
-              </div>
-              <div
-                className={cn(
-                  "flex items-center gap-2 px-3 py-2 hover:bg-muted/50 cursor-pointer rounded-lg transition-colors text-sm",
-                  isFavoritesPage && "bg-accent text-accent-foreground"
-                )}
-                onClick={() => navigate('/favorites')}
-              >
-                <Star className="w-4 h-4 text-yellow-500" />
-                <span className="font-medium">收藏</span>
-                <span className="ml-auto text-xs text-muted-foreground">
-                  {notes.filter(n => n.isFavorite).length}
-                </span>
-              </div>
-              <div
-                className={cn(
-                  "flex items-center gap-2 px-3 py-2 hover:bg-muted/50 cursor-pointer rounded-lg transition-colors text-sm",
-                  isTrashPage && "bg-accent text-accent-foreground"
-                )}
-                onClick={() => navigate('/trash')}
-              >
-                <Trash2 className="w-4 h-4 text-red-500" />
-                <span className="font-medium">回收站</span>
               </div>
             </div>
 

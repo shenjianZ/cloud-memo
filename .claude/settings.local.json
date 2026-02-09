@@ -8,7 +8,8 @@
       "Bash(timeout:*)",
       "Bash(find:*)",
       "Bash(ls:*)",
-      "Bash(sqlite3:*)"
+      "Bash(sqlite3:*)",
+      "Bash(pnpm add:*)"
     ]
   }
 }

@@ -14,9 +14,10 @@ import { useNoteStore } from "@/store/noteStore";
 import { useSyncStore } from "@/store/syncStore";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { tiptapJsonToMarkdown } from "@/lib/tiptapMarkdown";
+import { tiptapJsonToMarkdown } from "@/lib/tiptapSerializer";
 import { useAuthStore } from "@/store/authStore";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { useParams } from "react-router-dom";
 
 interface NoteContextMenuProps {
     position: { x: number; y: number };
@@ -39,6 +40,8 @@ export function NoteContextMenu({
     const navigate = useNavigate();
     const { isAuthenticated } = useAuthStore();
     const { syncSingleNote } = useSyncStore();
+    // 获取当前路由中的 noteId
+    const { noteId: currentRouteNoteId } = useParams<{ noteId: string }>();
 
     const note = noteId ? getNote(noteId) : null;
 
@@ -156,6 +159,12 @@ export function NoteContextMenu({
         setIsDeleting(true);
         try {
             await deleteNote(note.id);
+
+            // 检查删除的笔记是否是当前编辑器中打开的笔记
+            if (currentRouteNoteId === note.id) {
+                navigate("/");
+            }
+
             toast.success("笔记已删除");
             setIsDeleteDialogOpen(false);
         } catch (error) {

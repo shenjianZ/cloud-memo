@@ -1,11 +1,13 @@
 import { useNavigate } from 'react-router-dom'
-import { FileText, Plus, Keyboard } from 'lucide-react'
+import { FileText, Plus, Keyboard, Star, Trash2, ArrowRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useNoteStore } from '@/store/noteStore'
 
 export default function Home() {
   const navigate = useNavigate()
-  const { notesCount } = useNoteStore()
+  const { notesCount, notes } = useNoteStore()
+
+  const favoritesCount = notes.filter(n => n.isFavorite).length
 
   const handleCreateNote = () => {
     navigate('/editor/new')
@@ -68,6 +70,48 @@ export default function Home() {
               <span className="font-mono">Ctrl+D</span>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* 快捷入口 */}
+      <div>
+        <h2 className="text-xl font-semibold mb-4">快捷入口</h2>
+        <div className="grid gap-4 md:grid-cols-2">
+          <button
+            onClick={() => navigate('/favorites')}
+            className="flex items-center justify-between p-4 rounded-lg border bg-card hover:bg-accent/50 transition-colors text-left"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-yellow-500/10">
+                <Star className="w-5 h-5 text-yellow-500" />
+              </div>
+              <div>
+                <div className="font-semibold">收藏</div>
+                <div className="text-sm text-muted-foreground">
+                  {favoritesCount} 篇收藏的笔记
+                </div>
+              </div>
+            </div>
+            <ArrowRight className="w-5 h-5 text-muted-foreground" />
+          </button>
+
+          <button
+            onClick={() => navigate('/trash')}
+            className="flex items-center justify-between p-4 rounded-lg border bg-card hover:bg-accent/50 transition-colors text-left"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-red-500/10">
+                <Trash2 className="w-5 h-5 text-red-500" />
+              </div>
+              <div>
+                <div className="font-semibold">回收站</div>
+                <div className="text-sm text-muted-foreground">
+                  查看已删除的笔记
+                </div>
+              </div>
+            </div>
+            <ArrowRight className="w-5 h-5 text-muted-foreground" />
+          </button>
         </div>
       </div>
     </div>

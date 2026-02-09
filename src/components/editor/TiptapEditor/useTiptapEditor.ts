@@ -15,6 +15,9 @@ import { Table } from '@tiptap/extension-table'
 import TableRow from '@tiptap/extension-table-row'
 import TableHeader from '@tiptap/extension-table-header'
 import TableCell from '@tiptap/extension-table-cell'
+import { Markdown } from 'tiptap-markdown'
+import { MathExtension } from '@aarkue/tiptap-math-extension'
+import 'katex/dist/katex.min.css'
 import type { TiptapContent } from '@/types/note'
 import { TableCommands } from './tableExtensions'
 
@@ -177,6 +180,23 @@ export function useTiptapEditor({
 
       // 表格增强命令
       TableCommands,
+
+      // Markdown 支持
+      Markdown.configure({
+        html: false,                // 不允许 HTML，保持纯 Markdown
+        transformPastedText: true,   // 粘贴的 Markdown 自动解析
+        transformCopiedText: true,   // 复制时转换为 Markdown
+      }),
+
+      // 数学公式支持
+      MathExtension.configure({
+        evaluation: false,           // 不计算结果，仅渲染
+        katexOptions: {
+          strict: false,            // 关闭严格模式，避免换行符警告
+          throwOnError: false,      // 遇到错误不抛出异常
+          displayMode: true,        // 支持块级公式
+        },
+      }),
     ],
 
     content: initialContent,

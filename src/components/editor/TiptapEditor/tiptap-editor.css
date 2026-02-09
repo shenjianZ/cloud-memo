@@ -69,8 +69,18 @@
 }
 
 /* ==================== 列表样式 ==================== */
-.ProseMirror ul,
+.ProseMirror ul {
+  list-style-type: disc;
+  list-style-position: outside;
+  margin-top: 0.75em;
+  margin-bottom: 0.75em;
+  padding-left: 1.5em;
+  color: var(--foreground);
+}
+
 .ProseMirror ol {
+  list-style-type: decimal;
+  list-style-position: outside;
   margin-top: 0.75em;
   margin-bottom: 0.75em;
   padding-left: 1.5em;
@@ -80,6 +90,16 @@
 .ProseMirror li {
   margin-top: 0.25em;
   margin-bottom: 0.25em;
+}
+
+/* 列表标记样式 */
+.ProseMirror ul ::marker {
+  color: var(--foreground);
+}
+
+.ProseMirror ol ::marker {
+  color: var(--foreground);
+  font-weight: 400;
 }
 
 .ProseMirror li p {

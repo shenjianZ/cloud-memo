@@ -12,8 +12,9 @@ import type { UpdateFolderRequest } from "@/types/folder";
 import type { Note, NoteFolder, NoteFilter } from "@/types/note";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
-import { tiptapJsonToMarkdown } from "@/lib/tiptapMarkdown";
+import { tiptapJsonToMarkdown } from "@/lib/tiptapSerializer";
 import { getNoteTitle } from "@/lib/noteHelpers";
+import { getNewFolderDepth, getDefaultFolderColor } from "@/lib/folderHelpers";
 import { toast } from "sonner";
 
 /**
@@ -142,6 +143,9 @@ interface NoteStore {
     getNote: (id: string) => Note | undefined;
     searchNotes: (filter: NoteFilter) => Note[];
     searchNotesApi: (query: string) => Promise<Note[]>;
+
+    // 文件夹辅助函数
+    getNoteIdsInFolder: (folderId: string) => string[];
 
     // 存储
     loadNotesFromStorage: () => Promise<void>;
@@ -339,9 +343,14 @@ export const useNoteStore = create<NoteStore>()(
             createFolder: async (name, parentId) => {
                 set({ isLoading: true });
                 try {
+                    // 计算新文件夹的层级并获取默认颜色
+                    const depth = getNewFolderDepth(parentId || null, get().folders);
+                    const defaultColor = getDefaultFolderColor(depth);
+
                     const apiFolder = await folderApi.createFolder({
                         name,
                         parentId,
+                        color: defaultColor, // 设置默认颜色
                     });
                     // 将后端 Folder 类型转换为前端 NoteFolder 类型
                     const folder: NoteFolder = {
@@ -687,6 +696,34 @@ export const useNoteStore = create<NoteStore>()(
             // 新增：只清空前端状态，不删除数据库记录（用于切换账号）
             clearNotesState: () => {
                 set({ notes: [], activeNoteId: null, folders: [] });
+            },
+
+            // 获取文件夹下的所有笔记 ID（包括子文件夹）
+            getNoteIdsInFolder: (folderId: string) => {
+                const { notes, folders } = get();
+                const noteIds: string[] = [];
+
+                // 递归获取子文件夹 ID
+                const getSubfolderIds = (parentId: string): string[] => {
+                    const subfolders = folders
+                        .filter((f) => f.parentId === parentId)
+                        .map((f) => f.id);
+                    return subfolders.concat(
+                        ...subfolders.flatMap((id) => getSubfolderIds(id))
+                    );
+                };
+
+                // 获取所有子文件夹 ID（包括自身）
+                const allFolderIds = [folderId, ...getSubfolderIds(folderId)];
+
+                // 获取这些文件夹下的所有笔记 ID
+                for (const note of notes) {
+                    if (note.folder && allFolderIds.includes(note.folder)) {
+                        noteIds.push(note.id);
+                    }
+                }
+
+                return noteIds;
             },
         }),
         {

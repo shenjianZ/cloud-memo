@@ -1,4 +1,6 @@
-import { Settings as SettingsIcon } from 'lucide-react'
+import { Settings as SettingsIcon, ArrowLeft } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { AppearanceSettings } from '@/components/settings/AppearanceSettings'
 import { EditorSettings } from '@/components/settings/EditorSettings'
@@ -11,11 +13,22 @@ import { AccountSyncSettings } from '@/components/sync/AccountSyncSettings'
 import { AppSettings } from '@/components/settings/AppSettings'
 
 export default function Settings() {
+  const navigate = useNavigate()
+
   return (
     <div className="p-4 sm:p-6 max-w-4xl mx-auto">
       {/* 页面标题 */}
       <div className="mb-4 sm:mb-6">
         <div className="flex items-center gap-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 w-8 p-0"
+            onClick={() => navigate(-1)}
+            title="返回"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
           <SettingsIcon className="h-6 w-6 sm:h-8 sm:w-8" />
           <div>
             <h1 className="text-2xl sm:text-3xl font-bold">设置</h1>

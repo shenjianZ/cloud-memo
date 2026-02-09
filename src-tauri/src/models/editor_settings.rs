@@ -16,6 +16,8 @@ pub struct EditorSettings {
     // ===== 代码字体设置 =====
     pub code_font_family: String,  // 代码字体族
     pub code_font_size: i32,  // 代码字体大小（px）
+    // ===== Markdown 预览样式设置 =====
+    pub markdown_preview_style: String,  // Markdown 预览样式：minimal（朴素）、default（默认）、rich（丰富）
     // ===== 时间戳 =====
     pub updated_at: i64,  // 更新时间（Unix 时间戳，秒）
 }
@@ -40,6 +42,8 @@ pub struct UpdateEditorSettingsRequest {
     pub code_font_family: Option<String>,  // 新代码字体族
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code_font_size: Option<i32>,  // 新代码字体大小
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub markdown_preview_style: Option<String>,  // 新 Markdown 预览样式
 }
 
 impl Default for EditorSettings {
@@ -54,6 +58,7 @@ impl Default for EditorSettings {
             heading_font_weight: 600,
             code_font_family: "JetBrains Mono, Fira Code, Consolas, Courier New, monospace".to_string(),
             code_font_size: 14,
+            markdown_preview_style: "default".to_string(),
             updated_at: chrono::Utc::now().timestamp(),
         }
     }

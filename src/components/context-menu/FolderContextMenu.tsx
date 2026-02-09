@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { useAuthStore } from '@/store/authStore'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { useParams } from 'react-router-dom'
 
 interface FolderContextMenuProps {
   position: { x: number; y: number }
@@ -26,10 +27,12 @@ export function FolderContextMenu({
   folderId,
   onCreateSubfolder,
 }: FolderContextMenuProps) {
-  const { folders, createNote, createFolder, deleteFolder, updateFolder, notes } = useNoteStore()
+  const { folders, createNote, createFolder, deleteFolder, updateFolder, notes, getNoteIdsInFolder } = useNoteStore()
   const navigate = useNavigate()
   const { isAuthenticated } = useAuthStore()
   const { syncSingleFolder } = useSyncStore()
+  // 获取当前路由中的 noteId
+  const { noteId: currentRouteNoteId } = useParams<{ noteId: string }>()
 
   const folder = folders.find((f) => f.id === folderId)
 
@@ -161,6 +164,15 @@ export function FolderContextMenu({
     setIsDeleting(true)
     try {
       await deleteFolder(folder.id)
+
+      // 获取文件夹下的所有笔记 ID（包括子文件夹）
+      const noteIdsInFolder = getNoteIdsInFolder(folder.id)
+
+      // 检查当前路由的笔记是否在被删除的文件夹中
+      if (currentRouteNoteId && noteIdsInFolder.includes(currentRouteNoteId)) {
+        navigate('/')
+      }
+
       toast.success('文件夹已删除')
       setIsDeleteDialogOpen(false)
     } catch (error) {

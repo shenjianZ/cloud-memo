@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { Workspace, CreateWorkspaceRequest, UpdateWorkspaceRequest } from '@types/workspace';
+import type { Workspace, CreateWorkspaceRequest, UpdateWorkspaceRequest } from '@/types/workspace';
 
 /**
  * 迁移孤立数据的返回结果
