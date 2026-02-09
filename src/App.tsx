@@ -77,14 +77,17 @@ function App() {
   useEffect(() => {
     // 全局快捷键监听器
     const handleToggleSidebar = () => {
+      console.log('[App.tsx] handleToggleSidebar called')
       toggleSidebar()
     }
 
     const handleOpenSettings = () => {
+      console.log('[App.tsx] handleOpenSettings called')
       navigate('/settings')
     }
 
     const handleCreateNote = () => {
+      console.log('[App.tsx] handleCreateNote called')
       navigate('/editor/new')
     }
 

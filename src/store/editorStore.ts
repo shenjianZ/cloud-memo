@@ -65,6 +65,14 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       // 如果移除的是活动标签页，激活最后一个标签页
       if (isActive && newTabs.length > 0) {
         newTabs[newTabs.length - 1].isActive = true
+
+        // 触发路由更新事件
+        const nextTab = newTabs[newTabs.length - 1]
+        window.dispatchEvent(
+          new CustomEvent('tab-switched', {
+            detail: { noteId: nextTab.noteId },
+          }),
+        )
       }
 
       return { tabs: newTabs }

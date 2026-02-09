@@ -28,6 +28,7 @@ interface Note {
   tags: string[]
   isFavorite: boolean
   isPinned: boolean
+  isDeleted: boolean
 }
 
 /**
@@ -71,6 +72,7 @@ export default function Trash() {
         tags: [],
         isFavorite: apiNote.isFavorite,
         isPinned: apiNote.isPinned,
+        isDeleted: apiNote.isDeleted,
       }))
 
       setTrashNotes(deletedNotes)

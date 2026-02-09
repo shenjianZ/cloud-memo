@@ -16,6 +16,7 @@ import { useEditorSettingsStore } from '@/store/editorSettingsStore'
 import { useEditorFontSettings } from '@/hooks/useEditorFontSettings'
 import type { TiptapContent } from '@/types/note'
 import type { MarkdownPreviewStyle } from '@/services/editorSettingsApi'
+import type { EditorViewMode } from '@/types/editor'
 import { Loader2, Edit, Eye, Split, Palette } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { extractTitleFromContent } from '@/lib/noteHelpers'
@@ -29,6 +30,8 @@ import {
 interface TiptapEditorProps {
   noteId: string
   content: TiptapContent
+  viewMode?: EditorViewMode
+  onViewModeChange?: (mode: EditorViewMode) => void
 }
 
 /**
@@ -36,11 +39,15 @@ interface TiptapEditorProps {
  * 包含工具栏、编辑区、Bubble Menu 和 Slash Command Menu
  * 支持编辑/预览/分屏三种视图模式
  */
-export function TiptapEditor({ noteId, content }: TiptapEditorProps) {
+export function TiptapEditor({ noteId, content, viewMode: externalViewMode, onViewModeChange: externalSetViewMode }: TiptapEditorProps) {
   const { updateNote, getNote, setNoteTags } = useNoteStore()
-  const { setEditor, clearEditor, updateCounts, viewMode, setViewMode } = useTiptapStore()
+  const { setEditor, clearEditor, updateCounts, viewMode: internalViewMode, setViewMode: internalSetViewMode } = useTiptapStore()
   const { settings, updateSettings, loadSettings } = useEditorSettingsStore()
   const saveTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined)
+
+  // 使用外部 viewMode（如果提供），否则使用 store 中的
+  const viewMode = externalViewMode ?? internalViewMode
+  const setViewMode = externalSetViewMode ?? internalSetViewMode
   const [selectedTags, setSelectedTags] = useState<string[]>([])
   const [showTagPopover, setShowTagPopover] = useState(false)
   const [showMoreMenu, setShowMoreMenu] = useState(false)

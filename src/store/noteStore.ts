@@ -60,6 +60,7 @@ async function apiNoteToNote(apiNote: ApiNote, tagStore?: any): Promise<Note> {
         folder: apiNote.folderId,
         isPinned: apiNote.isPinned,
         isFavorite: apiNote.isFavorite,
+        isDeleted: apiNote.isDeleted,
     };
 }
 

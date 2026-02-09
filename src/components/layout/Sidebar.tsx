@@ -3,6 +3,8 @@ import { Search, Settings, PanelLeftClose, PanelLeftOpen, Plus, FolderPlus, Home
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useNoteStore } from '@/store/noteStore'
+import { useEditorStore } from '@/store/editorStore'
+import { useSidebarStore } from '@/store/sidebarStore'
 import { useContextMenuStore } from '@/store/contextMenuStore'
 import { cn } from '@/lib/utils'
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom'
@@ -27,6 +29,8 @@ export function Sidebar() {
   const [searchQuery, setSearchQuery] = useState('')
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
   const { folders, notes, createNote, createFolder, loadNotesFromStorage } = useNoteStore()
+  const { openNote } = useEditorStore()
+  const { isCollapsed, toggleSidebar } = useSidebarStore()
   const {
     folderContextMenu,
     noteContextMenu,
@@ -37,7 +41,6 @@ export function Sidebar() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const location = useLocation()
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const isCreatingRef = useRef(false) // 使用 ref 防止重复创建
   const [currentPath, setCurrentPath] = useState(window.location.hash.slice(1) || '/')
@@ -197,6 +200,7 @@ export function Sidebar() {
         onClick={(folderId) => {
           navigate(`/?folder=${folderId}`)
         }}
+        onNoteClick={handleNoteClick}
         searchQuery={searchQueryLower}
         isCreatingSub={isCreatingSub}
         creatingSubfolderForId={creatingSubfolderForId}
@@ -264,8 +268,19 @@ export function Sidebar() {
     try {
       const newNote = await createNote({
         title: '未命名笔记',
-        content: { type: 'doc', content: [{ type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: '未命名笔记' }] }] },
+        content: {
+          type: 'doc',
+          content: [
+            {
+              type: 'heading',
+              attrs: { level: 1 },
+              content: [{ type: 'text', text: '未命名笔记' }],
+            },
+          ],
+        },
       })
+      // 打开 Tab 并导航
+      openNote(newNote.id, newNote.title || '未命名笔记')
       navigate(`/editor/${newNote.id}`)
     } catch (error) {
       console.error('Failed to create note:', error)
@@ -276,18 +291,30 @@ export function Sidebar() {
         setIsLoading(false)
       }, 500)
     }
-  }, [isLoading, createNote, navigate])
+  }, [isLoading, createNote, navigate, openNote])
+
+  // 处理笔记点击 - 打开新 Tab 并导航
+  const handleNoteClick = useCallback(
+    (noteId: string) => {
+      const note = notes.find((n) => n.id === noteId)
+      if (note) {
+        openNote(noteId, note.title || '未命名笔记')
+        navigate(`/editor/${noteId}`)
+      }
+    },
+    [notes, openNote, navigate],
+  )
 
   return (
     <aside
       className={cn(
         "bg-muted/30 border-r border-border h-screen flex flex-col transition-all duration-300",
-        isSidebarCollapsed ? "w-12" : "w-80"
+        isCollapsed ? "w-12" : "w-80"
       )}
     >
       {/* 顶部工具栏 */}
       <div className="h-14 border-b border-border flex items-center justify-between px-3">
-        {!isSidebarCollapsed ? (
+        {!isCollapsed ? (
           <>
             <div className="relative flex-1">
               <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -313,7 +340,7 @@ export function Sidebar() {
                 variant="ghost"
                 size="sm"
                 className="h-8 w-8 p-0"
-                onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                onClick={() => toggleSidebar()}
                 title="折叠侧边栏"
               >
                 <PanelLeftClose className="w-4 h-4" />
@@ -326,7 +353,7 @@ export function Sidebar() {
               variant="ghost"
               size="sm"
               className="h-8 w-8 p-0"
-              onClick={() => setIsSidebarCollapsed(false)}
+              onClick={() => toggleSidebar()}
               title="展开侧边栏"
             >
               <PanelLeftOpen className="w-4 h-4" />
@@ -337,7 +364,7 @@ export function Sidebar() {
 
       {/* 内容区域 */}
       <div className="flex-1 overflow-y-auto custom-scrollbar">
-        {!isSidebarCollapsed && (
+        {!isCollapsed && (
           <>
             {/* 首页入口 */}
             <div className="px-2 py-2 border-b border-border/50">
@@ -395,7 +422,7 @@ export function Sidebar() {
               {/* 文件夹树（包含文件夹和笔记） */}
               {tree.length > 0 ? (
                 <div className="space-y-1">
-                  {tree.map(folder => renderFolder(folder))}
+                  {tree.map((folder) => renderFolder(folder))}
 
                   {/* 根文件夹内联输入 */}
                   {isCreatingRoot && (
@@ -425,14 +452,17 @@ export function Sidebar() {
 
               {/* 根目录笔记（不在任何文件夹中的笔记） */}
               {(() => {
-                const rootNotes = sortedNotes.filter(n => !n.folder)
+                const rootNotes = sortedNotes.filter((n) => !n.folder)
                 if (rootNotes.length === 0) return null
 
                 // 应用搜索过滤
                 const filteredRootNotes = searchQuery
-                  ? rootNotes.filter(note => {
+                  ? rootNotes.filter((note) => {
                       const title = getNoteTitle(note).toLowerCase()
-                      const content = typeof note.content === 'string' ? note.content.toLowerCase() : ''
+                      const content =
+                        typeof note.content === 'string'
+                          ? note.content.toLowerCase()
+                          : ''
                       return title.includes(searchQuery) || content.includes(searchQuery)
                     })
                   : rootNotes
@@ -446,8 +476,10 @@ export function Sidebar() {
                         key={note.id}
                         note={note}
                         level={0}
-                        onClick={() => navigate(`/editor/${note.id}`)}
-                        onContextMenu={(e) => showNoteContextMenu({ x: e.clientX, y: e.clientY }, note.id)}
+                        onClick={() => handleNoteClick(note.id)}
+                        onContextMenu={(e) =>
+                          showNoteContextMenu({ x: e.clientX, y: e.clientY }, note.id)
+                        }
                         isActive={activeNoteId === note.id}
                       />
                     ))}

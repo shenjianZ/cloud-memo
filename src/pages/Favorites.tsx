@@ -10,8 +10,8 @@ export default function Favorites() {
   const navigate = useNavigate()
   const { notes } = useNoteStore()
 
-  // 获取所有收藏的笔记
-  const favoriteNotes = notes.filter(note => note.isFavorite)
+  // 获取所有收藏的笔记（排除已删除的）
+  const favoriteNotes = notes.filter(note => note.isFavorite && !note.isDeleted)
 
   // 按更新时间排序
   const sortedNotes = [...favoriteNotes].sort(

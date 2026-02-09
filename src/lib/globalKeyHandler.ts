@@ -180,11 +180,14 @@ class GlobalKeyHandler {
     // 标准化快捷键组合
     const keys = normalizeKeyCombo(event);
 
+    console.log('[GlobalKeyHandler] Key pressed:', keys, 'event.key:', event.key, 'event.code:', event.code);
+
     // 从 store 中查找对应的动作ID
     const actionId = useKeybindingStore.getState().getActionByKeys(keys);
 
     // 如果没有找到对应的快捷键，不处理
     if (!actionId) {
+      console.log('[GlobalKeyHandler] No actionId found for keys:', keys);
       return false;
     }
 

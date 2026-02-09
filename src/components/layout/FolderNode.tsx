@@ -2,7 +2,7 @@ import { ChevronDown, ChevronRight, Folder, FolderOpen } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useContextMenuStore } from '@/store/contextMenuStore'
 import { useNoteStore } from '@/store/noteStore'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { NoteItem } from '../notes/NoteItem'
 import { FolderInlineInput } from './FolderInlineInput'
 
@@ -21,6 +21,7 @@ interface FolderNodeProps {
   expandedFolders: Set<string>
   onToggle: (folderId: string) => void
   onClick: (folderId: string) => void
+  onNoteClick?: (noteId: string) => void
   searchQuery?: string  // 搜索关键词（小写）
   isCreatingSub?: boolean  // 是否正在创建子文件夹
   creatingSubfolderForId?: string | null  // 正在创建子文件夹的文件夹 ID
@@ -40,6 +41,7 @@ export function FolderNode({
   expandedFolders,
   onToggle,
   onClick,
+  onNoteClick,
   searchQuery = '',
   isCreatingSub = false,
   creatingSubfolderForId = null,
@@ -48,7 +50,6 @@ export function FolderNode({
 }: FolderNodeProps) {
   const { showFolderContextMenu, showNoteContextMenu } = useContextMenuStore()
   const { folders, notes } = useNoteStore()
-  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const hasChildren = folder.children && folder.children.length > 0
 
@@ -152,6 +153,7 @@ export function FolderNode({
                 expandedFolders={expandedFolders}
                 onToggle={onToggle}
                 onClick={onClick}
+                onNoteClick={onNoteClick}
                 searchQuery={searchQuery}
                 isCreatingSub={creatingSubfolderForId === child.id}
                 creatingSubfolderForId={creatingSubfolderForId}
@@ -178,7 +180,7 @@ export function FolderNode({
                   key={note.id}
                   note={note}
                   level={level + 1}
-                  onClick={() => navigate(`/editor/${note.id}`)}
+                  onClick={() => onNoteClick?.(note.id)}
                   onContextMenu={(e) =>
                     showNoteContextMenu({ x: e.clientX, y: e.clientY }, note.id)
                   }

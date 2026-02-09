@@ -44,42 +44,49 @@ export class KeybindingActionExecutor {
   }
 
   private async executeGlobalNewNote(): Promise<boolean> {
+    console.log('[KeybindingActions] executeGlobalNewNote')
     const event = new CustomEvent('keybinding-note-new')
     window.dispatchEvent(event)
     return true
   }
 
   private async executeGlobalOpenSettings(): Promise<boolean> {
+    console.log('[KeybindingActions] executeGlobalOpenSettings')
     const event = new CustomEvent('keybinding-open-settings')
     window.dispatchEvent(event)
     return true
   }
 
   private async executeGlobalToggleSidebar(): Promise<boolean> {
+    console.log('[KeybindingActions] executeGlobalToggleSidebar')
     const event = new CustomEvent('keybinding-toggle-sidebar')
     window.dispatchEvent(event)
     return true
   }
 
   private async executeNoteSave(): Promise<boolean> {
+    console.log('[KeybindingActions] executeNoteSave')
     const event = new CustomEvent('keybinding-note-save')
     window.dispatchEvent(event)
     return true
   }
 
   private async executeNoteFind(): Promise<boolean> {
+    console.log('[KeybindingActions] executeNoteFind')
     const event = new CustomEvent('keybinding-note-find')
     window.dispatchEvent(event)
     return true
   }
 
   private async executeNoteCloseTab(): Promise<boolean> {
+    console.log('[KeybindingActions] executeNoteCloseTab')
     const event = new CustomEvent('keybinding-note-close-tab')
     window.dispatchEvent(event)
     return true
   }
 
   private async executeNoteTogglePreview(): Promise<boolean> {
+    console.log('[KeybindingActions] executeNoteTogglePreview')
     const event = new CustomEvent('keybinding-note-toggle-preview')
     window.dispatchEvent(event)
     return true
