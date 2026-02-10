@@ -13,9 +13,10 @@ export function isMac(): boolean {
  */
 export function normalizeKeyCombo(event: KeyboardEvent): KeyCombination {
   return {
-    ctrl: event.ctrlKey || event.metaKey, // Mac 上 metaKey 就是 Cmd 键
+    ctrl: event.ctrlKey,
     alt: event.altKey,
     shift: event.shiftKey,
+    meta: event.metaKey,
     key: event.code, // 使用 code 而不是 key（保持原始大小写）
   };
 }
@@ -109,6 +110,7 @@ export function deserializeKeyBinding(str: string): KeyCombination {
     ctrl: parts.some(p => p === 'ctrl' || p === 'cmd' || p === '⌘'),
     alt: parts.some(p => p === 'alt' || p === 'option' || p === '⌥'),
     shift: parts.some(p => p === 'shift' || p === '⇧'),
+    meta: false, // 序列化字符串不包含 meta 键信息
     key: parts[parts.length - 1].toLowerCase(), // 最后一部分是主键
   };
 }
@@ -188,6 +190,7 @@ export function keyToCombo(key: string): KeyCombination {
     ctrl: hasCtrl,
     alt: hasAlt,
     shift: hasShift,
+    meta: false, // comboToKey 不编码 meta 键
     key: mainKey,
   };
 }

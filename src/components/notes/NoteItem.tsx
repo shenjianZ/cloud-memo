@@ -2,6 +2,7 @@ import { FileText } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getNoteTitle } from '@/lib/noteHelpers'
 import type { Note } from '@/types/note'
+import { NoteInlineRename } from './NoteInlineRename'
 
 interface NoteItemProps {
   note: Note
@@ -9,13 +10,25 @@ interface NoteItemProps {
   isActive?: boolean
   onContextMenu?: (e: React.MouseEvent, noteId: string) => void
   level?: number
+  isRenaming?: boolean  // 是否正在重命名
+  onUpdateNote?: (noteId: string, newTitle: string) => Promise<void>  // 更新笔记回调
+  onCancelRename?: () => void  // 取消重命名回调
 }
 
 /**
  * 简洁的笔记项组件（类似文件夹项样式）
  * 只显示标题和图标，与文件夹项对齐
  */
-export function NoteItem({ note, onClick, isActive, onContextMenu, level = 0 }: NoteItemProps) {
+export function NoteItem({
+  note,
+  onClick,
+  isActive,
+  onContextMenu,
+  level = 0,
+  isRenaming = false,
+  onUpdateNote,
+  onCancelRename,
+}: NoteItemProps) {
   const title = getNoteTitle(note)
 
   const handleClick = (e: React.MouseEvent) => {
@@ -27,6 +40,19 @@ export function NoteItem({ note, onClick, isActive, onContextMenu, level = 0 }: 
     e.preventDefault() // 阻止浏览器默认的右键菜单
     e.stopPropagation() // 阻止事件冒泡到父元素
     onContextMenu?.(e, note.id)
+  }
+
+  // 重命名模式
+  if (isRenaming) {
+    return (
+      <NoteInlineRename
+        noteId={note.id}
+        currentTitle={title}
+        level={level}
+        onUpdate={onUpdateNote || (async () => {})}
+        onCancel={onCancelRename || (() => {})}
+      />
+    )
   }
 
   return (

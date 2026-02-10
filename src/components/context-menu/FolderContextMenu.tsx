@@ -15,6 +15,7 @@ interface FolderContextMenuProps {
   onClose: () => void
   folderId: string | null
   onCreateSubfolder?: (folderId: string) => void  // 新建子文件夹回调
+  onStartRename?: (folderId: string) => void  // 开始重命名回调
 }
 
 /**
@@ -26,6 +27,7 @@ export function FolderContextMenu({
   onClose,
   folderId,
   onCreateSubfolder,
+  onStartRename,
 }: FolderContextMenuProps) {
   const { folders, createNote, createFolder, deleteFolder, updateFolder, notes, getNoteIdsInFolder } = useNoteStore()
   const navigate = useNavigate()
@@ -84,18 +86,24 @@ export function FolderContextMenu({
   const handleRename = () => {
     if (!folder) return
 
-    const newName = prompt('请输入新名称:', folder.name)
-    if (!newName || !newName.trim()) return
+    // 使用回调触发内联重命名
+    if (onStartRename) {
+      onStartRename(folder.id)
+    } else {
+      // 如果没有提供回调，回退到原来的方式（保持向后兼容）
+      const newName = prompt('请输入新名称:', folder.name)
+      if (!newName || !newName.trim()) return
 
-    updateFolder(folder.id, { name: newName.trim() })
-      .then(() => {
-        toast.success('重命名成功')
-        onClose()
-      })
-      .catch((error) => {
-        console.error('Failed to rename folder:', error)
-        toast.error('重命名失败')
-      })
+      updateFolder(folder.id, { name: newName.trim() })
+        .then(() => {
+          toast.success('重命名成功')
+          onClose()
+        })
+        .catch((error) => {
+          console.error('Failed to rename folder:', error)
+          toast.error('重命名失败')
+        })
+    }
   }
 
   const handleSetColor = () => {

@@ -26,9 +26,11 @@ impl KeybindingRepository {
     /// 加载快捷键配置
     pub fn load(&self) -> Result<KeybindingsData> {
         if !self.storage_path.exists() {
-            // 如果文件不存在，返回默认配置
-            log::info!("Keybindings file not found, using default configuration");
-            return Ok(get_default_keybindings());
+            // 如果文件不存在，创建默认配置文件
+            log::info!("Keybindings file not found, creating default configuration file");
+            let default_data = get_default_keybindings();
+            self.save(&default_data)?;
+            return Ok(default_data);
         }
 
         let content = fs::read_to_string(&self.storage_path)

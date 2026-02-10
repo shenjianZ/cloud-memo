@@ -24,6 +24,7 @@ interface NoteContextMenuProps {
     isVisible: boolean;
     onClose: () => void;
     noteId: string | null;
+    onStartRename?: (noteId: string) => void;  // 开始重命名回调
 }
 
 /**
@@ -34,6 +35,7 @@ export function NoteContextMenu({
     isVisible,
     onClose,
     noteId,
+    onStartRename,
 }: NoteContextMenuProps) {
     const { getNote, updateNote, deleteNote, exportNote, favoriteNote } =
         useNoteStore();
@@ -98,18 +100,24 @@ export function NoteContextMenu({
     const handleRename = () => {
         if (!note) return;
 
-        const newTitle = prompt("请输入新标题:", note.title);
-        if (!newTitle || !newTitle.trim()) return;
+        // 使用回调触发内联重命名
+        if (onStartRename) {
+            onStartRename(note.id);
+        } else {
+            // 如果没有提供回调，回退到原来的方式（保持向后兼容）
+            const newTitle = prompt("请输入新标题:", note.title);
+            if (!newTitle || !newTitle.trim()) return;
 
-        updateNote(note.id, { title: newTitle.trim() })
-            .then(() => {
-                toast.success("重命名成功");
-                onClose();
-            })
-            .catch((error) => {
-                console.error("Failed to rename note:", error);
-                toast.error("重命名失败");
-            });
+            updateNote(note.id, { title: newTitle.trim() })
+                .then(() => {
+                    toast.success("重命名成功");
+                    onClose();
+                })
+                .catch((error) => {
+                    console.error("Failed to rename note:", error);
+                    toast.error("重命名失败");
+                });
+        }
     };
 
     const handleCopy = async () => {

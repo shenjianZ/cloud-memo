@@ -5,6 +5,7 @@ import { useNoteStore } from '@/store/noteStore'
 import { useSearchParams } from 'react-router-dom'
 import { NoteItem } from '../notes/NoteItem'
 import { FolderInlineInput } from './FolderInlineInput'
+import { FolderInlineRename } from './FolderInlineRename'
 
 interface FolderTreeNode {
   id: string
@@ -22,11 +23,15 @@ interface FolderNodeProps {
   onToggle: (folderId: string) => void
   onClick: (folderId: string) => void
   onNoteClick?: (noteId: string) => void
-  searchQuery?: string  // 搜索关键词（小写）
   isCreatingSub?: boolean  // 是否正在创建子文件夹
   creatingSubfolderForId?: string | null  // 正在创建子文件夹的文件夹 ID
   onCreateSubfolder?: (name: string, parentId: string) => Promise<void>  // 创建子文件夹回调
   onCancelCreatingSub?: () => void  // 取消创建子文件夹回调
+  isRenaming?: boolean  // 是否正在重命名
+  renamingFolderId?: string | null  // 正在重命名的文件夹 ID
+  onStartRename?: (folderId: string) => void  // 开始重命名回调
+  onUpdateFolder?: (folderId: string, newName: string) => Promise<void>  // 更新文件夹回调
+  onCancelRename?: () => void  // 取消重命名回调
 }
 
 /**
@@ -42,11 +47,15 @@ export function FolderNode({
   onToggle,
   onClick,
   onNoteClick,
-  searchQuery = '',
   isCreatingSub = false,
   creatingSubfolderForId = null,
   onCreateSubfolder,
   onCancelCreatingSub,
+  isRenaming = false,
+  renamingFolderId = null,
+  onStartRename,
+  onUpdateFolder,
+  onCancelRename,
 }: FolderNodeProps) {
   const { showFolderContextMenu, showNoteContextMenu } = useContextMenuStore()
   const { folders, notes } = useNoteStore()
@@ -59,30 +68,12 @@ export function FolderNode({
   // 获取完整的文件夹数据（包含颜色等属性）
   const folderData = folders.find((f) => f.id === folder.id)
 
-  // 获取该文件夹下的笔记（支持搜索过滤）
-  const folderNotes = notes.filter((n) => {
-    // 必须在该文件夹下
-    if (n.folder !== folder.id) return false
-
-    // 如果有搜索关键词，检查标题或内容是否匹配
-    if (searchQuery) {
-      const title = n.title?.toLowerCase() || ''
-      const content = typeof n.content === 'string' ? n.content.toLowerCase() : ''
-
-      return title.includes(searchQuery) || content.includes(searchQuery)
-    }
-
-    return true
-  })
+  // 获取该文件夹下的笔记
+  const folderNotes = notes.filter((n) => n.folder === folder.id)
 
   const handleClick = () => {
-    // 如果有子文件夹或笔记，优先展开/折叠
-    if (hasChildren || folderNotes.length > 0) {
-      onToggle(folder.id)
-    } else {
-      // 没有子节点时才导航
-      onClick(folder.id)
-    }
+    // 始终展开/折叠，不进行导航
+    onToggle(folder.id)
   }
 
   const handleToggle = (e: React.MouseEvent) => {
@@ -100,43 +91,53 @@ export function FolderNode({
   return (
     <div>
       {/* 文件夹行 */}
-      <div
-        className={cn(
-          "flex items-center gap-2 px-3 py-2 hover:bg-muted/50 cursor-pointer rounded-lg transition-colors text-sm group",
-          isActive && "bg-accent text-accent-foreground"
-        )}
-        style={{ paddingLeft: `${level * 12 + 12}px` }}
-        onClick={handleClick}
-        onContextMenu={handleContextMenu}
-      >
-        {/* 展开/折叠箭头 */}
+      {isRenaming && renamingFolderId === folder.id ? (
+        <FolderInlineRename
+          folderId={folder.id}
+          currentName={folder.name}
+          level={level}
+          onUpdate={onUpdateFolder || (async () => {})}
+          onCancel={onCancelRename || (() => {})}
+        />
+      ) : (
         <div
-          className="flex-shrink-0 hover:bg-muted rounded p-0.5"
-          onClick={handleToggle}
-        >
-          {isExpanded || (hasChildren && expandedFolders.has(folder.id)) ? (
-            <ChevronDown className="w-3 h-3 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="w-3 h-3 text-muted-foreground" />
+          className={cn(
+            "flex items-center gap-2 px-3 py-2 hover:bg-muted/50 cursor-pointer rounded-lg transition-colors text-sm group",
+            isActive && "bg-accent text-accent-foreground"
           )}
+          style={{ paddingLeft: `${level * 12 + 12}px` }}
+          onClick={handleClick}
+          onContextMenu={handleContextMenu}
+        >
+          {/* 展开/折叠箭头 */}
+          <div
+            className="flex-shrink-0 hover:bg-muted rounded p-0.5"
+            onClick={handleToggle}
+          >
+            {isExpanded || (hasChildren && expandedFolders.has(folder.id)) ? (
+              <ChevronDown className="w-3 h-3 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="w-3 h-3 text-muted-foreground" />
+            )}
+          </div>
+
+          {/* 文件夹图标 */}
+          {(isExpanded || expandedFolders.has(folder.id)) ? (
+            <FolderOpen
+              className="w-4 h-4 flex-shrink-0"
+              style={{ color: folderData?.color || '#3b82f6' }}
+            />
+          ) : (
+            <Folder
+              className="w-4 h-4 flex-shrink-0"
+              style={{ color: folderData?.color || '#3b82f6' }}
+            />
+          )}
+
+          {/* 文件夹名称 */}
+          <span className="font-medium truncate flex-1">{folder.name}</span>
         </div>
-
-        {/* 文件夹图标 */}
-        {(isExpanded || expandedFolders.has(folder.id)) ? (
-          <FolderOpen
-            className="w-4 h-4 flex-shrink-0"
-            style={{ color: folderData?.color || '#3b82f6' }}
-          />
-        ) : (
-          <Folder
-            className="w-4 h-4 flex-shrink-0"
-            style={{ color: folderData?.color || '#3b82f6' }}
-          />
-        )}
-
-        {/* 文件夹名称 */}
-        <span className="font-medium truncate flex-1">{folder.name}</span>
-      </div>
+      )}
 
       {/* 子文件夹和笔记 */}
       {(isExpanded || expandedFolders.has(folder.id)) && (
@@ -154,11 +155,15 @@ export function FolderNode({
                 onToggle={onToggle}
                 onClick={onClick}
                 onNoteClick={onNoteClick}
-                searchQuery={searchQuery}
                 isCreatingSub={creatingSubfolderForId === child.id}
                 creatingSubfolderForId={creatingSubfolderForId}
                 onCreateSubfolder={onCreateSubfolder}
                 onCancelCreatingSub={onCancelCreatingSub}
+                isRenaming={isRenaming}
+                renamingFolderId={renamingFolderId}
+                onStartRename={onStartRename}
+                onUpdateFolder={onUpdateFolder}
+                onCancelRename={onCancelRename}
               />
             ))}
 
@@ -185,6 +190,9 @@ export function FolderNode({
                     showNoteContextMenu({ x: e.clientX, y: e.clientY }, note.id)
                   }
                   isActive={activeNoteId === note.id}
+                  isRenaming={isRenaming}
+                  onUpdateNote={onUpdateFolder}
+                  onCancelRename={onCancelRename}
                 />
               ))}
             </div>

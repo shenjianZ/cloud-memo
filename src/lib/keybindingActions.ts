@@ -13,6 +13,9 @@ export class KeybindingActionExecutor {
       case 'global.newNote':
         return this.executeGlobalNewNote()
 
+      case 'global.openSearch':
+        return this.executeGlobalOpenSearch()
+
       case 'global.openSettings':
         return this.executeGlobalOpenSettings()
 
@@ -46,6 +49,13 @@ export class KeybindingActionExecutor {
   private async executeGlobalNewNote(): Promise<boolean> {
     console.log('[KeybindingActions] executeGlobalNewNote')
     const event = new CustomEvent('keybinding-note-new')
+    window.dispatchEvent(event)
+    return true
+  }
+
+  private async executeGlobalOpenSearch(): Promise<boolean> {
+    console.log('[KeybindingActions] executeGlobalOpenSearch')
+    const event = new CustomEvent('keybinding-open-search')
     window.dispatchEvent(event)
     return true
   }

@@ -381,6 +381,15 @@ export const useKeybindingStore = create<KeybindingStore>()((set, get) => ({
       const cleanedKeybindings = { ...data.keybindings };
       let hasChanges = false;
 
+      // 合并新增的默认快捷键（确保新功能可用）
+      for (const [actionId, defaultCombo] of Object.entries(DEFAULT_KEYBINDINGS)) {
+        if (!(actionId in cleanedKeybindings)) {
+          cleanedKeybindings[actionId] = defaultCombo;
+          hasChanges = true;
+          console.log(`[KeybindingStore] Added new default keybinding: ${actionId}`);
+        }
+      }
+
       // 删除 'terminal.copy' - Ctrl+C 有特殊的中断信号含义
       if ('terminal.copy' in cleanedKeybindings) {
         delete cleanedKeybindings['terminal.copy'];
@@ -393,7 +402,7 @@ export const useKeybindingStore = create<KeybindingStore>()((set, get) => ({
         const oldBinding = cleanedKeybindings['sftp.refresh'];
         // 检查是否是旧的 Ctrl+R 配置
         if (oldBinding.ctrl && !oldBinding.alt && !oldBinding.shift && oldBinding.key === 'KeyR') {
-          cleanedKeybindings['sftp.refresh'] = { ctrl: false, alt: false, shift: false, key: 'F5' };
+          cleanedKeybindings['sftp.refresh'] = { ctrl: false, alt: false, shift: false, meta: false, key: 'F5' };
           hasChanges = true;
           console.log('[KeybindingStore] Updated sftp.refresh from Ctrl+R to F5');
         }
@@ -414,11 +423,12 @@ export const useKeybindingStore = create<KeybindingStore>()((set, get) => ({
       }
 
       if (hasChanges) {
-        // 如果有清理，保存清理后的配置
+        // 如果有清理或新增，保存清理后的配置
         await invoke('save_keybindings', {
           keybindings: cleanedKeybindings,
           presets: data.presets,
         });
+        console.log('[KeybindingStore] Saved cleaned keybindings to backend');
       }
 
       set({

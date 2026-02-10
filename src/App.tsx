@@ -7,8 +7,10 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import AppRoutes from './routes'
 import { useSidebarStore } from './store/sidebarStore'
 import { useAuthStore } from './store/authStore'
+import { useSearchStore } from './store/searchStore'
 import { globalKeyHandler } from './lib/globalKeyHandler'
 import { useInitEditorSettings } from './hooks/useEditorFontSettings'
+import { SearchCommand } from './components/search'
 
 // 订阅路由变化以更新快捷键处理器的当前路径
 function RouteWatcher() {
@@ -91,14 +93,21 @@ function App() {
       navigate('/editor/new')
     }
 
+    const handleOpenSearch = () => {
+      console.log('[App.tsx] handleOpenSearch called')
+      useSearchStore.getState().openSearch()
+    }
+
     window.addEventListener('keybinding-toggle-sidebar', handleToggleSidebar)
     window.addEventListener('keybinding-open-settings', handleOpenSettings)
     window.addEventListener('keybinding-note-new', handleCreateNote)
+    window.addEventListener('keybinding-open-search', handleOpenSearch)
 
     return () => {
       window.removeEventListener('keybinding-toggle-sidebar', handleToggleSidebar)
       window.removeEventListener('keybinding-open-settings', handleOpenSettings)
       window.removeEventListener('keybinding-note-new', handleCreateNote)
+      window.removeEventListener('keybinding-open-search', handleOpenSearch)
     }
   }, [navigate, toggleSidebar])
 
@@ -119,6 +128,7 @@ function App() {
     <>
       <RouteWatcher />
       <AppRoutes />
+      <SearchCommand />
     </>
   )
 }

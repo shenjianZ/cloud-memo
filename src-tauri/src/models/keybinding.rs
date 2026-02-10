@@ -38,6 +38,9 @@ pub fn get_default_keybindings() -> KeybindingsData {
     keybindings.insert("global.newNote".to_string(), KeyCombination {
         ctrl: true, alt: false, shift: false, meta: false, key: "KeyN".to_string(),
     });
+    keybindings.insert("global.openSearch".to_string(), KeyCombination {
+        ctrl: true, alt: false, shift: false, meta: false, key: "KeyK".to_string(),
+    });
     keybindings.insert("global.openSettings".to_string(), KeyCombination {
         ctrl: true, alt: false, shift: false, meta: false, key: "Comma".to_string(),
     });

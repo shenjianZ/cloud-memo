@@ -1,10 +1,10 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { Search, Settings, PanelLeftClose, PanelLeftOpen, Plus, FolderPlus, Home } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { useNoteStore } from '@/store/noteStore'
 import { useEditorStore } from '@/store/editorStore'
 import { useSidebarStore } from '@/store/sidebarStore'
+import { useSearchStore } from '@/store/searchStore'
 import { useContextMenuStore } from '@/store/contextMenuStore'
 import { cn } from '@/lib/utils'
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom'
@@ -12,7 +12,7 @@ import { NoteItem } from '../notes/NoteItem'
 import { FolderNode } from './FolderNode'
 import { FolderContextMenu, NoteContextMenu } from '@/components/context-menu'
 import { FolderInlineInput } from './FolderInlineInput'
-import { getNoteTitle } from '@/lib/noteHelpers'
+import { updateTitleInContent } from '@/lib/noteHelpers'
 
 interface FolderTree {
   id: string
@@ -26,11 +26,16 @@ interface FolderTree {
  * 包含：顶部工具栏 + 文件夹树 + 笔记列表
  */
 export function Sidebar() {
-  const [searchQuery, setSearchQuery] = useState('')
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
-  const { folders, notes, createNote, createFolder, loadNotesFromStorage } = useNoteStore()
+  const { folders, notes, createNote, createFolder, loadNotesFromStorage, updateFolder, updateNote } = useNoteStore()
   const { openNote } = useEditorStore()
   const { isCollapsed, toggleSidebar } = useSidebarStore()
+  const openSearch = useSearchStore((state) => state.openSearch)
+
+  // 重命名状态
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null)
+  const [renamingNoteId, setRenamingNoteId] = useState<string | null>(null)
   const {
     folderContextMenu,
     noteContextMenu,
@@ -112,7 +117,7 @@ export function Sidebar() {
     }
   }, [activeNoteId, notes, folders])
 
-  // 构建文件夹树结构（支持搜索过滤）
+  // 构建文件夹树结构
   const buildTree = (): FolderTree[] => {
     const map = new Map<string, FolderTree>()
     const roots: FolderTree[] = []
@@ -134,39 +139,6 @@ export function Sidebar() {
         roots.push(node)
       }
     })
-
-    // 第三步：如果有搜索关键词，过滤文件夹树
-    if (searchQuery) {
-      // 找出所有匹配的笔记所在的文件夹 ID
-      const matchedFolderIds = new Set<string>()
-      notes.forEach(note => {
-        const title = getNoteTitle(note).toLowerCase()
-        const content = typeof note.content === 'string' ? note.content.toLowerCase() : ''
-
-        if (title.includes(searchQuery) || content.includes(searchQuery)) {
-          if (note.folder) {
-            matchedFolderIds.add(note.folder)
-          }
-        }
-      })
-
-      // 递归过滤文件夹树：只保留包含匹配笔记的文件夹及其祖先
-      const filterTree = (nodes: FolderTree[]): FolderTree[] => {
-        return nodes.filter(node => {
-          // 检查该文件夹是否包含匹配的笔记
-          const hasMatchedNotes = matchedFolderIds.has(node.id)
-
-          // 递归检查子文件夹
-          const filteredChildren = filterTree(node.children || [])
-          node.children = filteredChildren
-
-          // 保留条件：自己有匹配的笔记 或 子文件夹有匹配的笔记
-          return hasMatchedNotes || filteredChildren.length > 0
-        })
-      }
-
-      return filterTree(roots)
-    }
 
     return roots
   }
@@ -201,11 +173,15 @@ export function Sidebar() {
           navigate(`/?folder=${folderId}`)
         }}
         onNoteClick={handleNoteClick}
-        searchQuery={searchQueryLower}
         isCreatingSub={isCreatingSub}
         creatingSubfolderForId={creatingSubfolderForId}
         onCreateSubfolder={handleCreateSubfolder}
         onCancelCreatingSub={() => setCreatingSubfolderForId(null)}
+        isRenaming={isRenaming}
+        renamingFolderId={renamingFolderId}
+        onStartRename={handleStartRenameFolder}
+        onUpdateFolder={handleUpdateFolder}
+        onCancelRename={handleCancelRename}
       />
     )
   }
@@ -216,9 +192,6 @@ export function Sidebar() {
   const sortedNotes = [...notes].sort(
     (a, b) => b.updatedAt - a.updatedAt
   )
-
-  // 获取搜索关键词（用于传递给 FolderNode）
-  const searchQueryLower = searchQuery.toLowerCase()
 
   // 创建根文件夹（内联输入）
   const handleCreateRootFolder = async (name: string) => {
@@ -305,6 +278,67 @@ export function Sidebar() {
     [notes, openNote, navigate],
   )
 
+  // 开始重命名文件夹
+  const handleStartRenameFolder = useCallback((folderId: string) => {
+    setRenamingFolderId(folderId)
+    setRenamingNoteId(null)
+    setIsRenaming(true)
+    hideFolderContextMenu()
+  }, [hideFolderContextMenu])
+
+  // 更新文件夹名称
+  const handleUpdateFolder = useCallback(async (folderId: string, newName: string) => {
+    try {
+      await updateFolder(folderId, { name: newName })
+      setIsRenaming(false)
+      setRenamingFolderId(null)
+    } catch (error) {
+      console.error('Failed to rename folder:', error)
+      throw error
+    }
+  }, [updateFolder])
+
+  // 开始重命名笔记
+  const handleStartRenameNote = useCallback((noteId: string) => {
+    setRenamingNoteId(noteId)
+    setRenamingFolderId(null)
+    setIsRenaming(true)
+    hideNoteContextMenu()
+  }, [hideNoteContextMenu])
+
+  // 更新笔记标题
+  const handleUpdateNote = useCallback(async (noteId: string, newTitle: string) => {
+    try {
+      // 获取当前笔记
+      const note = notes.find(n => n.id === noteId)
+      if (!note) {
+        throw new Error('Note not found')
+      }
+
+      // 更新内容中的标题（同步更新 Tiptap JSON 中的 H1）
+      const updatedContent = updateTitleInContent(note.content, newTitle)
+
+      // 同时更新标题和内容
+      await updateNote(noteId, {
+        title: newTitle,
+        content: updatedContent
+      })
+
+      setIsRenaming(false)
+      setRenamingNoteId(null)
+    } catch (error) {
+      console.error('Failed to rename note:', error)
+      throw error
+    }
+  }, [updateNote, notes])
+
+  // 取消重命名
+  const handleCancelRename = useCallback(() => {
+    setIsRenaming(false)
+    setRenamingFolderId(null)
+    setRenamingNoteId(null)
+  }, [])
+
   return (
     <aside
       className={cn(
@@ -316,15 +350,15 @@ export function Sidebar() {
       <div className="h-14 border-b border-border flex items-center justify-between px-3">
         {!isCollapsed ? (
           <>
-            <div className="relative flex-1">
-              <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="搜索..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8 h-9 text-sm"
-              />
-            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-9 w-9 p-0"
+              onClick={openSearch}
+              title="搜索笔记 (Ctrl+K)"
+            >
+              <Search className="w-4 h-4" />
+            </Button>
 
             <div className="flex items-center gap-1">
               <Button
@@ -455,23 +489,9 @@ export function Sidebar() {
                 const rootNotes = sortedNotes.filter((n) => !n.folder)
                 if (rootNotes.length === 0) return null
 
-                // 应用搜索过滤
-                const filteredRootNotes = searchQuery
-                  ? rootNotes.filter((note) => {
-                      const title = getNoteTitle(note).toLowerCase()
-                      const content =
-                        typeof note.content === 'string'
-                          ? note.content.toLowerCase()
-                          : ''
-                      return title.includes(searchQuery) || content.includes(searchQuery)
-                    })
-                  : rootNotes
-
-                if (filteredRootNotes.length === 0) return null
-
                 return (
                   <div className="mt-2 space-y-1">
-                    {filteredRootNotes.map((note) => (
+                    {rootNotes.map((note) => (
                       <NoteItem
                         key={note.id}
                         note={note}
@@ -481,6 +501,9 @@ export function Sidebar() {
                           showNoteContextMenu({ x: e.clientX, y: e.clientY }, note.id)
                         }
                         isActive={activeNoteId === note.id}
+                        isRenaming={isRenaming && renamingNoteId === note.id}
+                        onUpdateNote={handleUpdateNote}
+                        onCancelRename={handleCancelRename}
                       />
                     ))}
                   </div>
@@ -498,12 +521,14 @@ export function Sidebar() {
         onClose={hideFolderContextMenu}
         folderId={folderContextMenu.folderId}
         onCreateSubfolder={startCreatingSubfolder}
+        onStartRename={handleStartRenameFolder}
       />
       <NoteContextMenu
         position={noteContextMenu.position}
         isVisible={noteContextMenu.isVisible}
         onClose={hideNoteContextMenu}
         noteId={noteContextMenu.noteId}
+        onStartRename={handleStartRenameNote}
       />
     </aside>
   )

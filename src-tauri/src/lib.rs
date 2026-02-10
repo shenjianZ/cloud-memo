@@ -23,6 +23,10 @@ pub fn run() {
     // 创建日志目录
     std::fs::create_dir_all(&log_dir).expect("Failed to create log directory");
 
+    // 生成带时间戳的日志文件名
+    let now = chrono::Local::now();
+    let log_file_name = format!("app_{}.log", now.format("%Y%m%d_%H%M%S"));
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -38,7 +42,7 @@ pub fn run() {
                 .target(tauri_plugin_log::Target::new(
                     tauri_plugin_log::TargetKind::Folder {
                         path: log_dir,
-                        file_name: Some("app".to_string()),
+                        file_name: Some(log_file_name),
                     },
                 )) // 输出到文件
                 .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal) // 使用本地时区

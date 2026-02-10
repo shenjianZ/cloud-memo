@@ -5,18 +5,24 @@ interface DialogProps {
   open?: boolean
   onOpenChange?: (open: boolean) => void
   children: React.ReactNode
-  closeOnClickOutside?: boolean  // 新增：是否允许点击外部关闭
+  closeOnClickOutside?: boolean  // 是否允许点击外部关闭
+  withoutOverlay?: boolean  // 是否禁用遮罩层
 }
 
-const Dialog = ({ open, onOpenChange, children, closeOnClickOutside = true }: DialogProps) => {
+const Dialog = ({ open, onOpenChange, children, closeOnClickOutside = true, withoutOverlay = false }: DialogProps) => {
   if (!open) return null
 
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    if (closeOnClickOutside && e.target === e.currentTarget) {
+      onOpenChange?.(false)
+    }
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div
-        className="fixed inset-0 bg-black/50"
-        onClick={() => closeOnClickOutside && onOpenChange?.(false)}
-      />
+    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={handleBackdropClick}>
+      {!withoutOverlay && (
+        <div className="fixed inset-0 bg-black/50" />
+      )}
       <div className="relative z-50">{children}</div>
     </div>
   )

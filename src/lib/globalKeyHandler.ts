@@ -32,6 +32,7 @@ export enum KeybindingPriority {
 const ACTION_SCOPES: Record<string, KeybindingScope> = {
   // 全局快捷键
   'global.newNote': KeybindingScope.Global,
+  'global.openSearch': KeybindingScope.Global,
   'global.openSettings': KeybindingScope.Global,
   'global.toggleSidebar': KeybindingScope.Global,
 

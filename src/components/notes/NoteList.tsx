@@ -1,9 +1,9 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Search, Plus, ChevronLeft, ChevronRight } from 'lucide-react'
-import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { useNoteStore } from '@/store/noteStore'
+import { useSearchStore } from '@/store/searchStore'
 import { NoteCard } from './NoteCard'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
@@ -19,7 +19,7 @@ export function NoteList() {
   const folderId = searchParams.get('folder')
   const filter = searchParams.get('filter')
   const { notes, loadNotesFromStorage, createNote } = useNoteStore()
-  const [searchQuery, setSearchQuery] = useState('')
+  const openSearch = useSearchStore((state) => state.openSearch)
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const isCreatingRef = useRef(false) // 使用 ref 防止重复创建
@@ -31,16 +31,6 @@ export function NoteList() {
   // 过滤笔记
   const filteredNotes = (() => {
     let result = notes
-
-    // 搜索过滤
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase()
-      result = result.filter(note => {
-        const title = getNoteTitle(note).toLowerCase()
-        return title.includes(query) ||
-          (typeof note.content === 'string' && note.content.toLowerCase().includes(query))
-      })
-    }
 
     // 文件夹过滤
     if (folderId) {
@@ -102,20 +92,20 @@ export function NoteList() {
       {/* 搜索栏 */}
       <div className="h-14 border-b border-border flex items-center px-3 gap-2">
         {!isCollapsed && (
-          <div className="relative flex-1">
-            <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder="搜索笔记..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-8 h-9 text-sm"
-            />
-          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-9 w-9 p-0 flex-shrink-0"
+            onClick={openSearch}
+            title="搜索笔记 (Ctrl+K)"
+          >
+            <Search className="w-4 h-4" />
+          </Button>
         )}
         <Button
           variant="ghost"
           size="sm"
-          className="h-8 w-8 p-0 flex-shrink-0"
+          className="h-8 w-8 p-0 flex-shrink-0 ml-auto"
           onClick={() => setIsCollapsed(!isCollapsed)}
         >
           {isCollapsed ? (
@@ -142,9 +132,7 @@ export function NoteList() {
                 ))
               ) : (
                 <div className="text-center text-muted-foreground text-sm py-8">
-                  {searchQuery
-                    ? '没有找到匹配的笔记'
-                    : filter === 'favorites'
+                  {filter === 'favorites'
                     ? '暂无收藏的笔记'
                     : folderId
                     ? '此文件夹为空'

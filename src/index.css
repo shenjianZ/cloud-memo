@@ -812,3 +812,42 @@ body {
   display: flex !important;
 }
 
+/* ==================== 搜索面板样式 ==================== */
+
+/* 搜索结果滚动条样式 */
+.search-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+.search-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.search-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.search-scroll::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+.search-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* 深色模式下的搜索滚动条 */
+.dark .search-scroll {
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+.dark .search-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.dark .search-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+

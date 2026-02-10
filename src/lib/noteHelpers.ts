@@ -38,6 +38,61 @@ function extractTextFromNode(node: any): string {
 }
 
 /**
+ * 更新 Tiptap JSON 或 Markdown 内容中的第一个一级标题
+ * 如果不存在一级标题，则在开头插入
+ */
+export function updateTitleInContent(content: Note['content'], newTitle: string): Note['content'] {
+  if (typeof content === 'string') {
+    // Markdown 格式
+    const h1Regex = /^#\s+(.+)$/m
+    if (h1Regex.test(content)) {
+      // 替换第一个 H1
+      return content.replace(h1Regex, `# ${newTitle}`)
+    } else {
+      // 在开头插入 H1
+      return `# ${newTitle}\n\n${content}`
+    }
+  }
+
+  // Tiptap JSON 格式
+  if (content?.type === 'doc' && content?.content) {
+    const newContent = {
+      type: content.type,
+      content: [...content.content]
+    }
+    let updated = false
+
+    // 查找并替换第一个一级标题
+    for (let i = 0; i < newContent.content.length; i++) {
+      const node = newContent.content[i]
+      if (node?.type === 'heading' && node.attrs?.level === 1) {
+        // 替换标题文本
+        newContent.content[i] = {
+          type: 'heading',
+          attrs: { level: 1 },
+          content: [{ type: 'text', text: newTitle }]
+        }
+        updated = true
+        break
+      }
+    }
+
+    // 如果没有找到一级标题，在开头插入
+    if (!updated) {
+      newContent.content.unshift({
+        type: 'heading',
+        attrs: { level: 1 },
+        content: [{ type: 'text', text: newTitle }]
+      })
+    }
+
+    return newContent
+  }
+
+  return content
+}
+
+/**
  * 获取笔记的显示标题
  * note.title 在后端是必填字段，总是有值（至少是 "未命名笔记"）
  * 如果 title 是默认值且内容中有 H1，则优先使用 H1
